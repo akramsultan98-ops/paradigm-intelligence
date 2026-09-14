@@ -199,3 +199,27 @@ form.filters label.grow input { width: 100%; }
 .delta { font-size: 11px; font-weight: 700; margin-left: 6px; }
 .delta.up { color: var(--qualified); }
 .delta.down { color: var(--hot); }
+
+/* --- email status: all four states visibly distinct ------------------- */
+/* UNKNOWN must never be invisible. An absent badge reads as "fine", and the
+   whole point is that a guessed address cannot be mistaken for a checked one. */
+.pill.VERIFIED { border-color: var(--accent); color: var(--accent); background: rgba(79,156,249,0.10); }
+.pill.PUBLIC   { border-color: var(--qualified); color: var(--qualified); background: rgba(81,207,102,0.10); }
+.pill.INFERRED { border-color: var(--very-high); color: var(--very-high); background: rgba(255,169,77,0.12); }
+.pill.UNKNOWN  { border-color: var(--muted); color: var(--muted); background: transparent;
+                 border-style: dashed; }
+.email .muted { color: var(--muted); }
+
+.legend {
+  margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--border);
+  border-radius: 8px; background: var(--panel-2);
+}
+.legend-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); margin-bottom: 8px;
+}
+.legend-row {
+  display: grid; grid-template-columns: 78px 1fr; gap: 10px;
+  align-items: center; font-size: 11px; color: var(--muted); margin-bottom: 5px;
+}
+.legend p { margin: 8px 0 0; }

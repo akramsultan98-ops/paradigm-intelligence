@@ -141,6 +141,10 @@ class ContactIngestResult(BaseModel):
     updated: int
     skipped: int
     unresolved_companies: list[str] = Field(default_factory=list)
+    opportunities_rescored: int = Field(
+        default=0,
+        description="Opportunities whose score moved because contact quality changed.",
+    )
 
 
 class RescoreStatsOut(BaseModel):

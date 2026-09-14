@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import SessionDep, SettingsDep
-from app.domain.enums import SourceType
+from app.domain.enums import IngestMode, SourceType
 from app.schemas.ingest import (
     AnalystSignalRequest,
     ContactDiscoveryRequest,
@@ -24,7 +24,7 @@ from app.services.companies import find_by_name
 from app.services.contact_discovery import run_contact_discovery
 from app.services.contacts import ContactInput, upsert_contact
 from app.services.pipeline import ingest_documents, run_ingestion
-from app.services.rescore import rescore_all
+from app.services.rescore import refresh_contact_quality, rescore_all
 from app.services.sources import get_or_create_source
 from app.sources.base import RawDocument
 
@@ -138,6 +138,10 @@ def ingest_contacts(payload: IngestContactsRequest, session: SessionDep) -> Cont
     """
     created = updated = skipped = 0
     unresolved: list[str] = []
+    # Companies whose contacts changed. Re-scored once each after every contact is
+    # attached, so contact quality actually reaches the opportunity score and the
+    # brief reports one real movement rather than several intermediate ones.
+    affected: set[object] = set()
 
     for entry in payload.contacts:
         company = find_by_name(session, entry.company_name)
@@ -159,6 +163,11 @@ def ingest_contacts(payload: IngestContactsRequest, session: SessionDep) -> Cont
                 published_at=entry.source_published_at,
                 confidence=entry.confidence,
                 adapter_key="api:contacts",
+                # A person submitted this, so it is ANALYST provenance. Only a
+                # source an adapter actually fetched is AUTOMATED, and mislabelling
+                # hand-entered data as automated is exactly what provenance exists
+                # to prevent.
+                ingest_mode=IngestMode.ANALYST,
             ),
         )
 
@@ -178,18 +187,51 @@ def ingest_contacts(payload: IngestContactsRequest, session: SessionDep) -> Cont
         )
         if contact is None:
             skipped += 1
-        elif was_created:
-            created += 1
         else:
-            updated += 1
+            affected.add(company.id)
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+
+    rescored = 0
+    for company_id in affected:
+        rescored += refresh_contact_quality(session, company_id)
 
     session.commit()
+    logger.info(
+        "contacts ingested",
+        extra={
+            # Not "created"/"updated": both collide with built-in LogRecord
+            # attributes and logging raises KeyError at the call site.
+            "contacts_created": created,
+            "contacts_updated": updated,
+            "opportunities_rescored": rescored,
+        },
+    )
     return ContactIngestResult(
         created=created,
         updated=updated,
         skipped=skipped,
         unresolved_companies=sorted(set(unresolved)),
+        opportunities_rescored=rescored,
     )
+
+
+@router.get(
+    "/sources/health",
+    summary="Probe configured sources",
+)
+def sources_health(settings: SettingsDep) -> dict:
+    """Which configured sources are reachable and usable from this host.
+
+    Distinguishes an egress-policy block from a source that is genuinely down —
+    the two need completely different fixes.
+    """
+    from app.services.source_health import check_all, summarize
+
+    results = check_all(settings=settings)
+    return {**summarize(results), "sources": [health.as_dict() for health in results]}
 
 
 @router.get(

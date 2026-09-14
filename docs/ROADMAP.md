@@ -6,8 +6,9 @@ Everything here is in the repository, exercised by the test suite, and — where
 build environment allowed it — run against real data.
 
 **Foundation.** FastAPI, PostgreSQL, two Alembic revisions (both verified to run
-forward and backward with zero model drift), Docker Compose, configuration with
-startup validation, structured logging, health and readiness probes, 408 tests.
+forward and backward with zero model drift), Docker Compose (config validated; see
+the gap below), configuration with startup validation, structured logging, health
+and readiness probes, 435 tests.
 
 **Data model.** Five tables, real constraints and indexes, explicit deduplication
 for companies, contacts, signals, opportunities and sources. Provenance
@@ -40,39 +41,108 @@ re-scoring of affected companies after discovery.
 brief — with filtering by sector, score, status, type and date, sorting on eight
 fields, and search across company name, contact name and contact email.
 
+**Source preflight.** `python -m app.cli check-sources` (and
+`GET /api/v1/sources/health`) probes every configured source and reports a verdict
+and advice for each. It distinguishes an egress-policy block from a source that is
+genuinely down — the two need completely different fixes, and conflating them
+wastes an afternoon. One attempt per source, no retries (a policy denial must not
+be retried), so it answers in seconds. Exits non-zero when nothing is usable.
+
 **Operations.** A background scheduler (off by default) and a CLI covering
-`ingest`, `discover-contacts`, `cycle`, `rescore`, `brief`, `sources`, `status`.
+`check-sources`, `ingest`, `discover-contacts`, `cycle`, `rescore`, `brief`,
+`sources`, `status`. All CLI diagnostics go to stderr so every command is pipeable.
 API-key access control on `/api/v1`, refused open outside development.
 
 ## Known gaps, and why
 
-**No source is enabled by default.** `config/sources.json` ships eight real,
-curated candidates — all disabled. The spec is explicit that a source may only be
-marked active if it actually works, and the build environment has no outbound
-network access to public sites, so no feed URL in that file has been confirmed to
-resolve, to be a valid feed, or to permit automated access. Enabling one is a
-four-step check documented in the file itself.
+### 1. No automated source can run from the build environment — measured, not assumed
 
-**No contact data in the live dataset.** Verified public contact information could
-not be obtained for the real companies currently in the database, and inventing an
-address, a name or a title is forbidden. Every real opportunity therefore scores
-`contact_quality = 0`, which is what holds most of them below the 70-point
-threshold. That is the honest result, not a bug — and it is a fair demonstration of
-how much contact quality is worth. The discovery path itself is implemented and
-tested end to end against fixture pages.
+The egress proxy in the environment this was built in answers **403 to CONNECT**
+for every news, government and business-publication host. The boundary was mapped
+directly:
 
-**Government and procurement adapters are not written.** These are the
-highest-value sources for Egyptian corporate signals and the first thing to build
-next. They are deliberately absent rather than stubbed: most publish HTML rather
-than feeds and need purpose-built parsers, and writing those against unverified
-endpoints would produce exactly the fake integration the brief forbids.
+| Reachable | Blocked (403 CONNECT) |
+|---|---|
+| `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `jsr.io`, `index.crates.io`, `proxy.golang.org` | `sis.gov.eg`, `mcit.gov.eg`, `dailynewsegypt.com`, `english.ahram.org.eg`, `egyptoil-gas.com`, `zawya.com` |
+| `api.anthropic.com` | `feeds.bbci.co.uk`, `news.google.com`, `reuters.com` |
+| `github.com`, `raw.githubusercontent.com`, `api.github.com` | every other public host tested |
+| `localhost` and private ranges | |
+
+Only developer infrastructure is permitted. `check-sources` reports all seven
+network sources as `BLOCKED_BY_EGRESS`, which is an *unverified* state, not a
+failed one — the sources may be perfectly healthy.
+
+**Exact change required to unblock it:** run the ingestion where outbound HTTPS to
+those domains is permitted. Either
+(a) run the backend on a normal host or server — nothing in the code needs to
+change, just `python -m app.cli check-sources` then `ingest`; or
+(b) if it must stay in a sandboxed environment, have the source domains added to
+that environment's egress allowlist. For Claude Code on the web the network policy
+is chosen when the environment is created; see
+<https://code.claude.com/docs/en/claude-code-on-the-web>.
+
+Routing around the proxy was not attempted: the proxy's own documentation states
+that a 403 is an organisation policy denial and must be reported rather than
+worked around.
+
+**No source has therefore been enabled**, because enabling one on the strength of
+an unverified probe is exactly what the rule forbids.
+
+### 2. No named contacts, and no email addresses
+
+Four real **department contact routes** exist, each evidenced by an official page
+on the company's own website (Elsewedy Electric's media and contact pages, Egypt
+Energy's exhibitor page, MOC's site). All carry `email_status: UNKNOWN`, which the
+UI displays explicitly.
+
+No named individuals and no addresses, for two separate reasons:
+
+- **Addresses:** the official contact pages exist but cannot be fetched (same
+  egress block), and search results do not expose the addresses printed on them.
+  Deriving an address from a name pattern is forbidden, so the answer is `UNKNOWN`.
+- **Names:** searching did surface named marketing and communications executives —
+  but only via contact-data brokers whose product *is* aggregated personal contact
+  data. Citing those as provenance would breach the rule that only publicly
+  available professional information from legitimate sources is used, so they were
+  discarded rather than recorded. An Investor Relations contact found on a genuinely
+  official page was also discarded: IR has no relationship to event spending, and
+  collecting contacts with no logical link to the opportunity is forbidden.
+
+This is why most real opportunities sit below the 70-point threshold: a department
+route scores about 45, so `contact_quality` contributes roughly 9 of the 20 points
+available. That is the scoring working as designed, and it is a fair measure of how
+much a real named decision-maker is worth.
+
+**What unblocks it:** egress. `ContactPageAdapter` is implemented and tested, and
+the real leadership-page URLs are already in the registry as templates — once those
+pages are reachable, `python -m app.cli discover-contacts` reads them.
+
+### 3. The Docker build is unverified
+
+The development environment has a `docker` CLI and **no daemon** — no
+`/var/run/docker.sock`, no podman, no nerdctl. So the images have never been built
+and the claim "Docker Compose works" is not made.
+
+What *was* verified without a daemon: `docker compose config` validates and
+interpolates correctly, `pip install ./backend` succeeds from `pyproject.toml`
+alone in a clean virtualenv (18 routes, console script working), and the Next.js
+`standalone/server.js` output that the runtime stage copies exists. The non-Docker
+path in `README.md` is fully verified end to end.
+
+### 4. Government and procurement adapters are not written
+
+These are the highest-value sources for Egyptian corporate signals and the first
+thing to build next. They are deliberately absent rather than stubbed: most publish
+HTML rather than feeds and need purpose-built parsers, and writing those against
+endpoints nobody has been able to read would produce exactly the fake integration
+the brief forbids.
 
 ## Next increments
 
-1. **Verify and enable the shipped sources.** In an environment with egress, work
-   through `config/sources.json` one entry at a time: fetch, confirm it parses,
-   read the terms, set the rate limit, enable. This is the single highest-value
-   task and needs no new code.
+1. **Verify and enable the shipped sources.** From a host with egress, run
+   `python -m app.cli check-sources`, then enable everything it reports
+   `READY_TO_ENABLE` once its terms of use are confirmed. This is the single
+   highest-value task and needs no new code.
 2. **Government and procurement adapters.** One class each, registered in
    `ADAPTERS`. The `SourceType` trust tiers and the adapter contract are already in
    place; the pipeline does not change.

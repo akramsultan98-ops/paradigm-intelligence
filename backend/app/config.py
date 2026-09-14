@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     #: Business hits that override a noise marker. A story can mention football
     #: sponsorship and still be a real sponsorship opportunity.
     relevance_noise_override_hits: int = 4
+    #: Per-hit weights. Event vocabulary weighs most: for an event management
+    #: company, a document about an exhibition is the most relevant kind there is.
+    relevance_weight_event: int = 6
+    relevance_weight_business: int = 5
+    relevance_weight_corporate: int = 3
+    #: Event hits that make a document self-evidently relevant, with no corporate
+    #: actor required. An event's own announcement is evidence on its own.
+    relevance_event_sufficiency_hits: int = 2
 
     # --- brief -----------------------------------------------------------
     brief_lookback_hours: int = 24

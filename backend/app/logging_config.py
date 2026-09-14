@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from typing import Any
+from typing import Any, TextIO
 
 #: Attributes the stdlib puts on every LogRecord. Passing any of these through
 #: ``extra=`` makes ``logging`` raise ``KeyError`` at the call site, so a stray
@@ -43,9 +43,17 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str, ensure_ascii=False)
 
 
-def configure_logging(level: str = "INFO", as_json: bool = False) -> None:
-    """Install a single stdout handler on the root logger."""
-    handler = logging.StreamHandler(sys.stdout)
+def configure_logging(
+    level: str = "INFO", as_json: bool = False, stream: TextIO | None = None
+) -> None:
+    """Install a single handler on the root logger.
+
+    Defaults to stdout, which is what a server wants — the platform collects it as
+    the log stream. The CLI passes stderr instead, so that command output stays
+    machine-readable: ``check-sources --json | jq`` has to receive JSON and nothing
+    else.
+    """
+    handler = logging.StreamHandler(stream or sys.stdout)
     handler.setFormatter(
         JsonFormatter()
         if as_json

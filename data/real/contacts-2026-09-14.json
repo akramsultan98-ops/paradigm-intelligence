@@ -1,0 +1,66 @@
+{
+  "_provenance": [
+    "Real, publicly-confirmed contact ROUTES for companies already in the database.",
+    "",
+    "What these are: departments that demonstrably exist at these companies, each",
+    "evidenced by an official page on the company's own website whose existence was",
+    "confirmed by search. They give an Account Manager the exact page to use.",
+    "",
+    "What these are NOT: named individuals, and not email addresses. No address could",
+    "be obtained for any of these companies from this environment - the pages exist but",
+    "cannot be fetched (egress blocked), and search results do not expose the",
+    "addresses on them. Every entry therefore carries email_status UNKNOWN, which is",
+    "the honest answer and is what the UI displays.",
+    "",
+    "Deliberately excluded: contact-data brokers (RocketReach, TheOrg and similar).",
+    "Those sites did surface named individuals, but their product is aggregated",
+    "personal contact data, and citing them as provenance would breach the rule that",
+    "only publicly available professional information from legitimate sources is used.",
+    "",
+    "Also deliberately excluded: an Investor Relations contact found on an official",
+    "page. IR has no relationship to event spending, and collecting contacts with no",
+    "logical link to the opportunity is forbidden."
+  ],
+  "contacts": [
+    {
+      "company_name": "Elsewedy Electric",
+      "name": "Elsewedy Electric - Media Relations",
+      "department": "PR",
+      "email_status": "UNKNOWN",
+      "confidence": 0.6,
+      "source_url": "https://elsewedyelectric.com/en/media",
+      "source_title": "Media - Elsewedy Electric official website",
+      "source_type": "COMPANY"
+    },
+    {
+      "company_name": "Elsewedy Electric",
+      "name": "Elsewedy Electric - Corporate Enquiries",
+      "department": "CORPORATE_COMMUNICATIONS",
+      "email_status": "UNKNOWN",
+      "confidence": 0.55,
+      "source_url": "https://elsewedyelectric.com/en/contact-us",
+      "source_title": "Contact Us - Elsewedy Electric official website",
+      "source_type": "COMPANY"
+    },
+    {
+      "company_name": "Egypt Energy Exhibition",
+      "name": "Egypt Energy - Exhibitor Sales",
+      "department": "MARKETING",
+      "email_status": "UNKNOWN",
+      "confidence": 0.6,
+      "source_url": "https://www.egypt-energy.com/en/exhibit.html",
+      "source_title": "Exhibit - Egypt Energy official website",
+      "source_type": "COMPANY"
+    },
+    {
+      "company_name": "Mediterranean Offshore Conference",
+      "name": "Mediterranean Offshore Conference - Organiser",
+      "department": "EVENTS",
+      "email_status": "UNKNOWN",
+      "confidence": 0.55,
+      "source_url": "https://moc-egypt.com/",
+      "source_title": "Mediterranean Offshore Conference official website",
+      "source_type": "COMPANY"
+    }
+  ]
+}

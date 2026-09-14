@@ -379,9 +379,9 @@ def test_contacts_attach_to_a_known_company(client: TestClient, session: Session
         },
     )
     assert response.status_code == 200
-    assert response.json() == {
-        "created": 1, "updated": 0, "skipped": 0, "unresolved_companies": []
-    }
+    body = response.json()
+    assert (body["created"], body["updated"], body["skipped"]) == (1, 0, 0)
+    assert body["unresolved_companies"] == []
 
     contact = session.scalars(select(Contact)).one()
     assert contact.email_status.value == "PUBLIC"
@@ -762,3 +762,123 @@ def test_manual_cycle_endpoint(client: TestClient) -> None:
     assert body["error"] is None
     for stage in ("ingestion", "contacts", "rescore"):
         assert stage in body
+
+
+def test_submitted_contacts_rescore_the_opportunity(
+    client: TestClient, session: Session
+) -> None:
+    """Contact quality is 20% of the score, so submitting a contact has to move it.
+
+    Before this was wired, contacts landed in the database and the score never
+    changed — the daily rescore only re-applies decay, so they would never have
+    taken effect at all.
+    """
+    from app.models import Opportunity as Opp
+
+    company = make_company(session, "Elsewedy Electric")
+    opportunity = make_opportunity(session, company=company, score=60, base_score=60)
+    before = opportunity.score
+
+    response = client.post(
+        "/api/v1/ingest/contacts",
+        json={
+            "contacts": [
+                {
+                    "company_name": "Elsewedy Electric",
+                    "name": "Ahmed Hassan",
+                    "job_title": "Marketing Director",
+                    "department": "MARKETING",
+                    "email": "a.hassan@elsewedy.test",
+                    "email_status": "PUBLIC",
+                    "source_url": "https://elsewedy.test/leadership",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["created"] == 1
+    assert body["opportunities_rescored"] >= 1
+
+    session.expire_all()
+    refreshed = session.get(Opp, opportunity.id)
+    assert refreshed is not None
+    assert refreshed.contact_quality > 0
+    assert refreshed.score != before
+    assert refreshed.primary_contact_id is not None
+
+
+def test_a_contact_with_no_email_is_unknown_and_still_counts(
+    client: TestClient, session: Session
+) -> None:
+    """A department route with no published address is real, modest intelligence."""
+    company = make_company(session, "Elsewedy Electric")
+    make_opportunity(session, company=company, score=60, base_score=60)
+
+    response = client.post(
+        "/api/v1/ingest/contacts",
+        json={
+            "contacts": [
+                {
+                    "company_name": "Elsewedy Electric",
+                    "name": "Elsewedy Electric - Media Relations",
+                    "department": "PR",
+                    "source_url": "https://elsewedy.test/media",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["created"] == 1
+
+    item = client.get("/api/v1/opportunities").json()[0]
+    contact = item["primary_contact"]
+    assert contact is not None
+    assert contact["email"] is None
+    assert contact["email_status"] == "UNKNOWN"
+    # Modest, not inflated: department knowledge alone sits near the damping floor.
+    assert 0 < contact["contact_score"] < 60
+
+
+def test_sources_health_endpoint(client: TestClient) -> None:
+    """The endpoint's contract. Whether the registry file resolves depends on the
+    working directory, so this asserts shape rather than a source count; the probe
+    logic itself is covered in test_source_health.py."""
+    response = client.get("/api/v1/sources/health")
+    assert response.status_code == 200
+    body = response.json()
+    for key in ("checked", "usable", "blocked_by_egress", "verdicts", "conclusion", "sources"):
+        assert key in body, key
+    assert isinstance(body["conclusion"], str) and body["conclusion"]
+    assert body["checked"] == len(body["sources"])
+    for entry in body["sources"]:
+        assert entry["verdict"]
+        assert entry["advice"]
+
+
+def test_submitted_contacts_are_analyst_provenance(
+    client: TestClient, session: Session
+) -> None:
+    """A person submitted it, so it must not be labelled automated."""
+    from app.models import Source as Src
+
+    make_company(session, "Elsewedy Electric")
+    session.commit()
+
+    client.post(
+        "/api/v1/ingest/contacts",
+        json={
+            "contacts": [
+                {
+                    "company_name": "Elsewedy Electric",
+                    "name": "Elsewedy Electric - Media Relations",
+                    "department": "PR",
+                    "source_url": "https://elsewedy.test/media",
+                }
+            ]
+        },
+    )
+    source = session.scalars(
+        select(Src).where(Src.adapter_key == "api:contacts")
+    ).one()
+    assert source.ingest_mode.value == "ANALYST"

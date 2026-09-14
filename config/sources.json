@@ -20,26 +20,32 @@
     "",
     "source_type, highest trust first: COMPANY, GOVERNMENT, PROCUREMENT,",
     "BUSINESS_PUBLICATION, INDUSTRY_PUBLICATION, EVENT, PUBLIC_PROFILE, OTHER.",
+    "An event's own official website counts as COMPANY: it is that organisation's",
+    "own site. Third-party listing aggregators are EVENT.",
     "",
     "EVERY ENTRY BELOW IS DISABLED, deliberately.",
     "",
     "Spec rule: only mark a source active if it actually works. These are real,",
-    "high-value Egyptian and regional candidates, but none has been verified from",
-    "this repository - the build environment has no outbound network access to",
-    "public sites, so no feed URL here has been confirmed to resolve, to be a",
-    "valid feed, or to permit automated access.",
+    "high-value Egyptian and regional candidates, but none has been verified - the",
+    "environment this repository was built in has no outbound network access to",
+    "public sites (the egress proxy answers 403 to CONNECT for every one of these",
+    "domains), so no feed URL here has been confirmed to resolve, to be a valid",
+    "feed, or to permit automated access.",
     "",
-    "Before enabling one, do all four:",
-    "  1. Fetch the feed and confirm it parses:  python -m app.cli ingest --source KEY",
-    "  2. Read its terms of use and robots.txt, and confirm automated access is",
-    "     permitted for this purpose.",
-    "  3. Confirm the rate limit here is within what the publisher allows.",
-    "  4. Set enabled: true and clear the note.",
+    "TO VERIFY AND ENABLE, from a host with outbound HTTPS:",
+    "",
+    "  python -m app.cli check-sources",
+    "",
+    "That probes every entry and prints a verdict and advice for each. It tells an",
+    "egress block apart from a source that is genuinely down, which need completely",
+    "different fixes. A source reported READY_TO_ENABLE has been fetched and parsed",
+    "successfully; confirm its terms of use and robots.txt permit automated access",
+    "for this purpose, then set enabled: true and clear its note.",
     "",
     "Government and official procurement portals are the highest-value sources for",
-    "Egyptian corporate signals and are tracked in docs/ROADMAP.md. They are not",
-    "listed as RSS entries because most publish HTML rather than feeds and need a",
-    "purpose-built adapter, which must not be written speculatively."
+    "Egyptian corporate signals and are tracked in docs/ROADMAP.md. Most publish",
+    "HTML rather than feeds and need a purpose-built adapter, which must not be",
+    "written speculatively against an endpoint nobody has been able to read."
   ],
   "sources": [
     {
@@ -53,7 +59,9 @@
       "rate_limit_per_minute": 10,
       "max_docs": 40,
       "notes": "UNVERIFIED. Official state news service; carries ministry-witnessed signings and openings. Confirm a feed endpoint exists before enabling - the site may be HTML only, in which case it needs an adapter, not this entry.",
-      "options": { "feed_url": "https://sis.gov.eg/rss" }
+      "options": {
+        "feed_url": "https://sis.gov.eg/rss"
+      }
     },
     {
       "key": "mcit-egypt",
@@ -66,7 +74,9 @@
       "rate_limit_per_minute": 10,
       "max_docs": 30,
       "notes": "UNVERIFIED. Strong for technology, telecom and data-centre signals. Confirm the feed path.",
-      "options": { "feed_url": "https://www.mcit.gov.eg/en/rss" }
+      "options": {
+        "feed_url": "https://www.mcit.gov.eg/en/rss"
+      }
     },
     {
       "key": "daily-news-egypt",
@@ -79,7 +89,9 @@
       "rate_limit_per_minute": 15,
       "max_docs": 50,
       "notes": "UNVERIFIED. Broad Egyptian business coverage. Check terms of use before enabling.",
-      "options": { "feed_url": "https://www.dailynewsegypt.com/feed/" }
+      "options": {
+        "feed_url": "https://www.dailynewsegypt.com/feed/"
+      }
     },
     {
       "key": "ahram-online-business",
@@ -92,7 +104,9 @@
       "rate_limit_per_minute": 15,
       "max_docs": 50,
       "notes": "UNVERIFIED. State-affiliated English coverage; good on state projects. Confirm the business-section feed id.",
-      "options": { "feed_url": "https://english.ahram.org.eg/rss/Portal/1.aspx" }
+      "options": {
+        "feed_url": "https://english.ahram.org.eg/rss/Portal/1.aspx"
+      }
     },
     {
       "key": "egypt-oil-and-gas",
@@ -105,7 +119,9 @@
       "rate_limit_per_minute": 12,
       "max_docs": 30,
       "notes": "UNVERIFIED. Sector-specific; strong on contract awards and project milestones in energy.",
-      "options": { "feed_url": "https://egyptoil-gas.com/feed/" }
+      "options": {
+        "feed_url": "https://egyptoil-gas.com/feed/"
+      }
     },
     {
       "key": "example-company-newsroom",
@@ -118,7 +134,9 @@
       "priority": 90,
       "rate_limit_per_minute": 10,
       "notes": "TEMPLATE, not a real source. Copy this per target company. A company newsroom is the highest-trust tier and company_hint means the extractor never has to guess the company.",
-      "options": { "feed_url": "https://example.com/newsroom/rss" }
+      "options": {
+        "feed_url": "https://example.com/newsroom/rss"
+      }
     },
     {
       "key": "example-leadership-page",
@@ -144,7 +162,9 @@
       "confidence": 0.6,
       "priority": 40,
       "notes": "Local newline-delimited JSON, for material an analyst supplies as documents. For a signal an analyst has already structured and verified, prefer POST /api/v1/ingest/signals, which records ANALYST provenance.",
-      "options": { "path": "data/local/analyst-inbox.jsonl" }
+      "options": {
+        "path": "data/local/analyst-inbox.jsonl"
+      }
     }
   ]
 }

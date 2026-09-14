@@ -170,3 +170,71 @@ def test_verdict_explains_itself(settings: Settings) -> None:
     assert assess("Elsewedy signs contract", ARTICLE, settings).reason.startswith(
         "relevance score"
     )
+
+
+# --------------------------------------------------------------------------
+# event vocabulary must weigh most (the second live-run regression)
+# --------------------------------------------------------------------------
+
+def test_a_confirmed_exhibition_passes(settings: Settings) -> None:
+    """The regression that mattered most.
+
+    This exact document — a confirmed, dated national exhibition on the organiser's
+    own site — scored 19 and was dropped, because event vocabulary was weighted
+    *lowest*. For an event management company it is the most relevant kind of
+    document there is.
+    """
+    text = (
+        "The official Egypt Energy site states the exhibition runs 12-14 October 2026 at "
+        "the Egypt International Exhibition Center, described as the leading annual energy "
+        "event in Egypt and North Africa, covering smart solutions, critical and backup "
+        "power, transmission and distribution and renewable energy. The site publishes an "
+        "exhibitor directory and a dedicated exhibitor section."
+    )
+    verdict = assess("Egypt Energy | 12 - 14 October 2026 | Leading energy event", text, settings)
+    assert verdict.relevant, verdict.reason
+    assert verdict.event_hits
+
+
+def test_a_conference_needs_no_corporate_actor(settings: Settings) -> None:
+    """An event's own announcement is evidence on its own.
+
+    A confirmed conference at a named venue was rejected for having no corporate
+    actor, because it had no reason to say "company" or "group".
+    """
+    text = (
+        "The official site states the Mediterranean Offshore Conference and Exhibition 2026 "
+        "takes place 20-22 October 2026 at the Bibliotheca Alexandrina Conference Center in "
+        "Alexandria. It is a combined conference and exhibition for the offshore sector."
+    )
+    verdict = assess("Mediterranean Offshore Conference & Exhibition 2026", text, settings)
+    assert verdict.relevant, verdict.reason
+    assert not verdict.corporate_hits
+
+
+def test_event_terms_outweigh_the_others(settings: Settings) -> None:
+    """The weighting itself, asserted rather than assumed."""
+    assert settings.relevance_weight_event > settings.relevance_weight_business
+    assert settings.relevance_weight_business > settings.relevance_weight_corporate
+
+
+def test_finance_vocabulary_is_covered(settings: Settings) -> None:
+    """A bank/payments partnership renewal scored 14 before this vocabulary existed."""
+    text = (
+        "Commercial International Bank and Mastercard renewed their strategic partnership "
+        "to accelerate digital commerce innovation, improve ecosystem efficiency and "
+        "broaden access to advanced financial solutions for consumers and businesses "
+        "across the region, the bank said."
+    )
+    verdict = assess("CIB, Mastercard deepen digital payments partnership", text, settings)
+    assert verdict.relevant, verdict.reason
+
+
+def test_event_words_alone_do_not_pass_a_noise_document(settings: Settings) -> None:
+    """Weighting events highly must not open a hole for entertainment copy."""
+    text = (
+        "The actress attended the film premiere event at the cinema, where the celebrity "
+        "guests gathered for the annual awards after-party, and spoke about her album and "
+        "her plans for fashion week later in the year."
+    )
+    assert not assess("Actress attends film premiere", text, settings).relevant

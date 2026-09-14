@@ -10,6 +10,7 @@ import { fetchCompany, formatDate, humanize } from "@/lib/api";
 import {
   AssertionTag,
   ContactCard,
+  EmailStatusLegend,
   ErrorPanel,
   Masthead,
   Nav,
@@ -165,6 +166,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </div>
             ))
           )}
+          <EmailStatusLegend />
         </section>
       </div>
 

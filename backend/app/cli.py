@@ -128,6 +128,41 @@ def cmd_sources(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_sources(args: argparse.Namespace) -> int:
+    """Probe every configured source and say which can be enabled.
+
+    This is the verification step ``config/sources.json`` demands, automated. Exits
+    non-zero when nothing is usable, so it can gate a deploy.
+    """
+    from app.services.source_health import check_all, summarize
+
+    results = check_all(only=args.source or None)
+    summary = summarize(results)
+
+    if args.json:
+        _print({"command": "check-sources", **summary,
+                "sources": [r.as_dict() for r in results]})
+        return 0 if summary["usable"] else 1
+
+    print(f"Checked {summary['checked']} configured source(s).\n")
+    for health in results:
+        flag = "OK  " if health.usable else "FAIL"
+        state = "enabled" if health.enabled else "disabled"
+        print(f"[{flag}] {health.key}  ({health.adapter}, {health.source_type}, {state})")
+        print(f"       target:  {health.target or '-'}")
+        print(f"       verdict: {health.verdict.value} - {health.detail}")
+        if health.sample_titles:
+            for title in health.sample_titles:
+                print(f"       sample:  {title}")
+        print(f"       advice:  {health.advice}")
+        print()
+    print("SUMMARY")
+    for verdict, count in sorted(summary["verdicts"].items()):
+        print(f"  {verdict}: {count}")
+    print(f"\n{summary['conclusion']}")
+    return 0 if summary["usable"] else 1
+
+
 def cmd_status(_: argparse.Namespace) -> int:
     """Configuration and database summary. Useful as a deployment smoke check."""
     from app.services.rescore import classification_counts, eligible_count
@@ -210,6 +245,14 @@ def build_parser() -> argparse.ArgumentParser:
     sources = subparsers.add_parser("sources", help="List configured sources.")
     sources.set_defaults(func=cmd_sources)
 
+    check = subparsers.add_parser(
+        "check-sources",
+        help="Probe configured sources and report which are usable from this host.",
+    )
+    check.add_argument("--source", action="append", help="Source key to check. Repeatable.")
+    check.add_argument("--json", action="store_true", help="Machine-readable output.")
+    check.set_defaults(func=cmd_check_sources)
+
     status = subparsers.add_parser("status", help="Show configuration and counts.")
     status.set_defaults(func=cmd_status)
 
@@ -221,7 +264,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = get_settings()
-    configure_logging(args.log_level or settings.log_level, settings.log_json)
+    # Diagnostics to stderr, data to stdout, so every command is pipeable.
+    configure_logging(
+        args.log_level or settings.log_level, settings.log_json, stream=sys.stderr
+    )
 
     try:
         return int(args.func(args))

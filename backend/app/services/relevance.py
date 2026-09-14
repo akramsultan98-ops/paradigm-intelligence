@@ -40,6 +40,11 @@ BUSINESS_TERMS: tuple[str, ...] = (
     "open", "zone", "economic", "industrial", "localization", "localisation",
     "worth", "facilities", "develop", "developer", "construction", "infrastructure",
     "allocation", "spectrum", "licence", "license", "permit", "venture", "fund",
+    # Added after a live run: a CIB/Mastercard partnership renewal scored 14 because
+    # none of the vocabulary of finance and commerce was covered.
+    "payment", "commerce", "financial", "finance", "banking", "insurance",
+    "digital", "innovation", "renew", "solution", "subsidiary", "approval",
+    "regulatory", "phase", "operational", "commission", "pipeline", "portfolio",
 )
 
 #: Corporate-actor vocabulary. A business word with no organisation behind it is
@@ -52,6 +57,7 @@ CORPORATE_TERMS: tuple[str, ...] = (
     "sector", "industry", "market",
     "zone", "organisation", "organization", "entity", "developer", "operator",
     "manufacturer", "conglomerate", "venture", "partner", "headquarters",
+    "provider", "division", "unit", "arm", "brand", "organiser", "organizer",
 )
 
 #: Event-possibility vocabulary. Not required, but a strong positive.
@@ -60,6 +66,11 @@ EVENT_TERMS: tuple[str, ...] = (
     "workshop", "seminar", "launch", "celebration", "anniversary", "gala",
     "roadshow", "briefing", "press conference", "inauguration", "groundbreaking",
     "opening", "awards", "hosted", "host", "attend", "delegation", "visit",
+    # Event-logistics vocabulary: the words that actually appear on an event's own
+    # site. Their absence is why a confirmed exhibition scored 19.
+    "exhibitor", "delegate", "attendee", "keynote", "agenda", "venue", "hall",
+    "stand", "booth", "edition", "annual", "showcase", "trade fair", "trade show",
+    "symposium", "sponsorship", "sponsor",
 )
 
 #: Clear noise markers (spec §10). These only reject when the document has no
@@ -173,7 +184,16 @@ def assess(
 
     # Score is a transparent count, capped per category so one repeated word
     # cannot carry a document on its own.
-    score = min(len(business), 8) * 5 + min(len(corporate), 5) * 4 + min(len(events), 5) * 3
+    #
+    # Event vocabulary carries the HEAVIEST weight. This was backwards until a live
+    # run dropped a confirmed, dated national exhibition at 19 points: for a company
+    # whose business is running events, a document about an exhibition is the most
+    # relevant kind of document that exists, not the least.
+    score = (
+        min(len(events), 5) * settings.relevance_weight_event
+        + min(len(business), 8) * settings.relevance_weight_business
+        + min(len(corporate), 5) * settings.relevance_weight_corporate
+    )
     score = min(score, 100)
 
     verdict = lambda ok, reason: RelevanceVerdict(  # noqa: E731 - local shorthand
@@ -186,9 +206,18 @@ def assess(
         return verdict(False, f"low-value content ({', '.join(weak[:3])})")
     if len(noise) >= settings.relevance_noise_hits and len(business) < len(noise):
         return verdict(False, f"predominantly noise ({', '.join(noise[:3])})")
-    if not business:
+    # An event's own announcement is strong evidence on its own. Requiring it to
+    # also name a "company" or a "group" is how a confirmed conference at a named
+    # venue got rejected for having no corporate actor.
+    strong_event_evidence = len(events) >= settings.relevance_event_sufficiency_hits
+
+    if not business and not strong_event_evidence:
         return verdict(False, "no business-change signal")
-    if not corporate and len(business) < settings.relevance_min_business_hits:
+    if (
+        not corporate
+        and not strong_event_evidence
+        and len(business) < settings.relevance_min_business_hits
+    ):
         return verdict(False, "no identifiable corporate actor")
     if score < settings.relevance_min_score:
         return verdict(False, f"relevance score {score} below {settings.relevance_min_score}")

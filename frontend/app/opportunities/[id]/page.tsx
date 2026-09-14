@@ -11,6 +11,7 @@ import { fetchOpportunity, formatDate, humanize } from "@/lib/api";
 import {
   AssertionTag,
   ContactCard,
+  EmailStatusLegend,
   ErrorPanel,
   Masthead,
   Nav,
@@ -207,6 +208,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               All contacts are public professional information, each stored with the source it was
               read from and an explicit email status.
             </p>
+            <EmailStatusLegend />
           </section>
         </div>
       </article>

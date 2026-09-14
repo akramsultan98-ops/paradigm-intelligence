@@ -45,9 +45,12 @@ It is **not** a CRM, **not** a scraper, and **not** a contact database.
 
 ## Quick start
 
+### With Docker
+
 ```bash
 cp .env.example .env          # set POSTGRES_PASSWORD, and API_KEY if not local
 docker compose up -d --build  # postgres + api + web
+docker compose logs -f api
 ```
 
 - Web: <http://localhost:3000>
@@ -56,23 +59,43 @@ docker compose up -d --build  # postgres + api + web
 
 Migrations run automatically on API start.
 
-### Local development without Docker
+> **The Docker build has not been verified.** It was written carefully but never
+> built: the development environment has a `docker` CLI and no daemon (no
+> `/var/run/docker.sock`, no podman). `docker compose config` validates, and the
+> two steps most likely to fail inside the images were checked directly —
+> `pip install ./backend` from `pyproject.toml` alone, and the Next.js
+> `standalone/server.js` output the runtime stage copies. Treat the first
+> `docker compose up --build` as unproven. The path below **is** verified.
+
+### Without Docker (this is the verified path)
 
 ```bash
-make venv                     # virtualenv + editable install
-export DATABASE_URL=postgresql+psycopg://paradigm:paradigm@127.0.0.1:5432/paradigm
-make migrate
-uvicorn app.main:app --app-dir backend --reload
+# 1. PostgreSQL
+createdb paradigm
+
+# 2. Backend
+python3 -m venv .venv
+.venv/bin/pip install -e 'backend[dev]'
+export DATABASE_URL=postgresql+psycopg://USER:PASSWORD@127.0.0.1:5432/paradigm
+export APP_ENV=development
+.venv/bin/python -m alembic -c backend/alembic.ini upgrade head
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# 3. Frontend, in a second shell
+cd frontend && npm install && npm run build
+API_BASE_URL=http://127.0.0.1:8000 npm run start -- --port 3000
+
+# 4. Check what your network can actually reach
+.venv/bin/python -m app.cli check-sources
 ```
 
-```bash
-cd frontend && npm install && npm run dev
-```
+Then open <http://localhost:3000>.
 
 ## Running the pipeline
 
 ```bash
-python -m app.cli ingest                      # fetch sources, filter, extract, score
+python -m app.cli check-sources                # probe sources: which work from HERE
+python -m app.cli ingest                       # fetch sources, filter, extract, score
 python -m app.cli ingest --source sis-egypt    # one source
 python -m app.cli discover-contacts            # read public contact pages
 python -m app.cli cycle                        # ingest + contacts + decay
@@ -81,6 +104,23 @@ python -m app.cli brief                        # today's brief as JSON
 python -m app.cli sources                      # list configured sources
 python -m app.cli status                       # config, counts, provenance split
 ```
+
+**Start with `check-sources`.** It probes every configured source and prints a
+verdict and advice for each, and it distinguishes the two failures that need
+completely different fixes:
+
+| Verdict | Meaning |
+|---|---|
+| `READY_TO_ENABLE` | fetched and parsed. Check its terms of use, then enable it. |
+| `ACTIVE` | working and already enabled. |
+| `BLOCKED_BY_EGRESS` | **your network refused the connection.** The source may be fine; you cannot reach it from here. |
+| `UNREACHABLE` | the connection was allowed and the publisher did not serve it. |
+| `NOT_USABLE` | it answered, but not with a usable feed. |
+| `EMPTY` | a valid feed with no entries. |
+| `MISCONFIGURED` | the registry entry itself is wrong. |
+
+It exits non-zero when nothing is usable, so it can gate a deploy. `--json` makes
+it pipeable (all CLI diagnostics go to stderr, data to stdout).
 
 Recurring refresh is either a cron entry calling `cycle`:
 
@@ -129,10 +169,34 @@ never sent to a browser.
 priority, rate limit, document cap and adapter options.
 
 **No source is enabled by default, on purpose.** The file ships eight real,
-curated Egyptian and regional candidates, all disabled, because the spec permits
-marking a source active only once it demonstrably works — and this repository was
-built in an environment with no outbound access to public sites, so none of those
-URLs has been confirmed. The file documents the four-step check to enable one.
+curated Egyptian and regional candidates, all disabled, because a source may only
+be marked active once it demonstrably works — and this repository was built in an
+environment whose egress proxy answers 403 to CONNECT for every one of those
+domains, so none has been verified either way.
+
+Run `python -m app.cli check-sources` from a host with outbound HTTPS. Anything it
+reports `READY_TO_ENABLE` has been fetched and parsed; confirm the publisher's
+terms permit automated access, then set `enabled: true`.
+
+## Current real data
+
+The database this repository was developed against holds **19 real, source-backed
+opportunities across 17 Egyptian companies**, in Telecommunications, Industrial,
+Real Estate, Engineering, Manufacturing, Energy, Oil & Gas, Pharma, Banking and
+Fintech. Three qualify for the Top 50.
+
+Every one carries a real public `source_url`, a real publication date where the
+source gave one, and `ANALYST` provenance — they were entered through
+`POST /api/v1/ingest/signals` with their citations, because automated ingestion is
+blocked by the egress policy described above. They are **not** labelled as
+automated extraction, and the UI shows the provenance on every row.
+
+Contacts: **four real department contact routes**, each evidenced by an official
+page on the company's own website, all with `email_status: UNKNOWN` because no
+address could be obtained. No named individuals and no email addresses — see
+`docs/ROADMAP.md` for exactly why, and what unblocks it.
+
+The raw submitted data and its citations are in `data/real/`.
 
 ## AI provider
 
@@ -151,8 +215,8 @@ rule_based` on everything it produces. Do not rank production opportunities on i
 ## Tests
 
 ```bash
-make test-unit    # 274 tests, no database required
-make test         # 408 tests, adds integration tests against real PostgreSQL
+make test-unit    # 298 tests, no database required
+make test         # 435 tests, adds integration tests against real PostgreSQL
 make lint
 ```
 

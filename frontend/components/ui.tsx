@@ -102,11 +102,57 @@ export function ScorePanel({ o }: { o: Opportunity }) {
   );
 }
 
+/**
+ * How an email address is known. Rendered for every contact, including when the
+ * answer is UNKNOWN — an absent badge would read as "fine", and the whole point is
+ * that an Account Manager can tell a verified address from a guessed one at a
+ * glance.
+ */
+const EMAIL_STATUS_MEANING: Record<string, string> = {
+  VERIFIED: "Checked by a verification step. Safe to use.",
+  PUBLIC: "Published on a public page by the organisation itself.",
+  INFERRED: "Derived, not published. Treat as unconfirmed — it may bounce.",
+  UNKNOWN: "No address on record. Use the source page or the switchboard.",
+};
+
+export function EmailStatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`pill ${status}`} title={EMAIL_STATUS_MEANING[status] ?? status}>
+      {status}
+    </span>
+  );
+}
+
+/** The four states, explained. Shown wherever contacts are listed in detail. */
+export function EmailStatusLegend() {
+  return (
+    <div className="legend">
+      <div className="legend-title">Email status</div>
+      {(["VERIFIED", "PUBLIC", "INFERRED", "UNKNOWN"] as const).map((status) => (
+        <div className="legend-row" key={status}>
+          <EmailStatusBadge status={status} />
+          <span>{EMAIL_STATUS_MEANING[status]}</span>
+        </div>
+      ))}
+      <p className="sub small">
+        An inferred address is never shown as verified, and an address is never
+        generated from a name pattern.
+      </p>
+    </div>
+  );
+}
+
 export function ContactCard({ contact }: { contact: ContactRef | null }) {
   if (!contact) {
     return (
-      <div className="role">
-        No contact identified yet — research the account before approaching.
+      <div className="contact">
+        <div className="role">
+          No contact identified yet. <EmailStatusBadge status="UNKNOWN" />
+        </div>
+        <div className="sub small">
+          Research the account before approaching, or run contact discovery against its
+          public contact page.
+        </div>
       </div>
     );
   }
@@ -117,16 +163,14 @@ export function ContactCard({ contact }: { contact: ContactRef | null }) {
         {contact.job_title ?? "Title unknown"} · {humanize(contact.department)} · quality{" "}
         {contact.contact_score}
       </div>
-      {contact.email ? (
-        <div className="email">
-          <a href={`mailto:${contact.email}`}>{contact.email}</a>{" "}
-          <span className={`pill ${contact.email_status}`} title="How this address is known">
-            {contact.email_status}
-          </span>
-        </div>
-      ) : (
-        <div className="role">No public email on record</div>
-      )}
+      <div className="email">
+        {contact.email ? (
+          <a href={`mailto:${contact.email}`}>{contact.email}</a>
+        ) : (
+          <span className="muted">No address on record</span>
+        )}{" "}
+        <EmailStatusBadge status={contact.email_status} />
+      </div>
       {contact.linkedin_url && (
         <a href={contact.linkedin_url} target="_blank" rel="noreferrer noopener">
           LinkedIn
