@@ -30,6 +30,17 @@ from tests.factories import make_company
 
 pytestmark = requires_db
 
+#: Article-length filler. The relevance gate (spec §10) drops thin documents by
+#: design, so fixtures have to look like real articles rather than one-liners.
+_LONG_BODY = (
+    "Elsewedy Electric announced the launch of a new smart metering product line at a "
+    "briefing in Cairo. The company said the line will be manufactured at its Egyptian "
+    "facilities and rolled out with distribution partners across the governorates. The "
+    "chairman said the investment supports the group's strategy of expanding its industrial "
+    "technology portfolio, and that customer and partner briefings would accompany the "
+    "commercial rollout."
+)
+
 
 class StubProvider(AIProvider):
     """Returns a scripted extraction, so pipeline behaviour is under test rather
@@ -90,7 +101,15 @@ def _document(url: str = "https://elsewedy.test/news/1", **overrides) -> RawDocu
     defaults = dict(
         url=url,
         title="Elsewedy Electric unveils a smart metering line",
-        content="Elsewedy Electric announced a new smart metering product line in Cairo.",
+        content=(
+            "Elsewedy Electric announced the launch of a new smart metering product line at a "
+            "briefing in Cairo. The company said the line will be manufactured at its Egyptian "
+            "facilities and rolled out with distribution partners across the governorates. The "
+            "chairman said the investment supports the group's strategy of expanding its "
+            "industrial technology portfolio, and that customer and partner briefings would "
+            "accompany the "
+            "commercial rollout."
+        ),
         source_type=SourceType.COMPANY,
         publisher="Elsewedy Electric",
         published_at=datetime.now(UTC) - timedelta(days=1),
@@ -187,11 +206,11 @@ def test_republished_content_is_deduplicated_by_hash(session: Session, db_engine
 def test_the_same_company_is_not_duplicated(session: Session, db_engine) -> None:
     """Different legal spellings must resolve to one account."""
     ingest_documents(
-        [_document(url="https://a.test/1", content="First story about the launch.")],
+        [_document(url="https://a.test/1", content="First story. " + _LONG_BODY)],
         StubProvider(_strong_extraction(company_name="Elsewedy Electric S.A.E.")),
     )
     ingest_documents(
-        [_document(url="https://b.test/2", content="Second, different story text.")],
+        [_document(url="https://b.test/2", content="Second, different wording. " + _LONG_BODY)],
         StubProvider(_strong_extraction(company_name="Elsewedy Electric Co.",
                                        signal_title="A second announcement")),
     )
@@ -201,11 +220,11 @@ def test_the_same_company_is_not_duplicated(session: Session, db_engine) -> None
 
 def test_the_same_signal_from_two_feeds_becomes_one_signal(session: Session, db_engine) -> None:
     ingest_documents(
-        [_document(url="https://a.test/1", content="Wording one about the launch.")],
+        [_document(url="https://a.test/1", content="Wording one. " + _LONG_BODY)],
         StubProvider(_strong_extraction()),
     )
     ingest_documents(
-        [_document(url="https://b.test/2", content="Quite different wording entirely.")],
+        [_document(url="https://b.test/2", content="Quite different wording. " + _LONG_BODY)],
         StubProvider(_strong_extraction()),
     )
     # Same company, type and title, so one signal — and therefore one opportunity.
@@ -215,10 +234,12 @@ def test_the_same_signal_from_two_feeds_becomes_one_signal(session: Session, db_
 
 
 def test_re_ingesting_updates_rather_than_duplicates(session: Session, db_engine) -> None:
-    ingest_documents([_document(url="https://a.test/1", content="One.")],
+    ingest_documents([_document(url="https://a.test/1", content="One. " + _LONG_BODY)],
                      StubProvider(_strong_extraction()))
-    stats = ingest_documents([_document(url="https://a.test/2", content="Two, different.")],
-                             StubProvider(_strong_extraction()))
+    stats = ingest_documents(
+        [_document(url="https://a.test/2", content="Two, different. " + _LONG_BODY)],
+        StubProvider(_strong_extraction()),
+    )
     assert stats.opportunities_updated == 1
     assert stats.opportunities_created == 0
     assert session.scalar(select(func.count(Opportunity.id))) == 1
@@ -250,7 +271,13 @@ def test_a_known_company_is_recognised_in_free_text(session: Session, db_engine)
             _document(
                 url="https://press.test/1",
                 title="Dairy producer announces expansion",
-                content="Juhayna Food Industries announced an expansion of its plant.",
+                content=(
+                    "Juhayna Food Industries announced an expansion of its production "
+                    "plant, the company said in a statement. The group said the "
+                    "expansion increases capacity for its dairy portfolio and follows "
+                    "an investment programme agreed with its board. Management said "
+                    "customers and distribution partners were briefed on the plan."
+                ),
                 source_type=SourceType.BUSINESS_PUBLICATION,
             )
         ],
@@ -292,8 +319,8 @@ def test_an_opportunity_without_a_reason_is_not_created(session: Session, db_eng
 
 def test_one_bad_document_does_not_stop_the_run(session: Session, db_engine) -> None:
     documents = [
-        _document(url="https://a.test/1", content="First story."),
-        _document(url="https://b.test/2", content="Second story."),
+        _document(url="https://a.test/1", content="First story. " + _LONG_BODY),
+        _document(url="https://b.test/2", content="Second story. " + _LONG_BODY),
     ]
 
     class FlakyProvider(AIProvider):
@@ -358,7 +385,7 @@ def test_confirmed_events_may_score_above_the_unconfirmed_cap(
 # --------------------------------------------------------------------------
 
 def test_contacts_raise_the_opportunity_score(session: Session, db_engine) -> None:
-    ingest_documents([_document(url="https://a.test/1", content="One.")],
+    ingest_documents([_document(url="https://a.test/1", content="One. " + _LONG_BODY)],
                      StubProvider(_strong_extraction()))
     without_contacts = session.scalars(select(Opportunity)).one().score
 
@@ -374,7 +401,8 @@ def test_contacts_raise_the_opportunity_score(session: Session, db_engine) -> No
     session.commit()
 
     # Re-ingest the same signal from a new source so it is re-scored.
-    ingest_documents([_document(url="https://a.test/2", content="Two, different text.")],
+    ingest_documents(
+        [_document(url="https://a.test/2", content="Two, different text. " + _LONG_BODY)],
                      StubProvider(_strong_extraction()))
     session.expire_all()
     opportunity = session.scalars(select(Opportunity)).one()
@@ -442,3 +470,115 @@ def test_malformed_contact_email_is_dropped_not_stored(session: Session, db_engi
     assert contact is not None
     assert contact.email is None
     assert contact.email_status is EmailStatus.UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# the relevance gate inside the pipeline (spec §10)
+# --------------------------------------------------------------------------
+
+def test_irrelevant_documents_cost_nothing(session: Session, db_engine) -> None:
+    """Filtered before anything is written and before the extractor is called."""
+    provider = StubProvider(_strong_extraction())
+    stats = ingest_documents(
+        [
+            _document(
+                url="https://sport.test/1",
+                title="Al Ahly beats Zamalek 2-1 in Cairo derby",
+                content=(
+                    "A late goal from the striker settled the match at the stadium before a "
+                    "full crowd. The referee added four minutes of stoppage time and the "
+                    "tournament table was left unchanged by the result."
+                ),
+            )
+        ],
+        provider,
+    )
+    assert stats.filtered_irrelevant == 1
+    assert stats.sources_created == 0
+    # No extraction call: the gate exists to save that cost.
+    assert provider.calls == []
+    assert session.scalar(select(func.count(Source.id))) == 0
+
+
+def test_the_gate_can_be_disabled(session: Session, db_engine) -> None:
+    from app.config import Settings
+
+    permissive = Settings(postgres_password="paradigm", relevance_enabled=False)
+    stats = ingest_documents(
+        [_document(url="https://a.test/thin", title="Hi", content="Short.")],
+        StubProvider(_strong_extraction()),
+        settings=permissive,
+    )
+    assert stats.filtered_irrelevant == 0
+    assert stats.sources_created == 1
+
+
+# --------------------------------------------------------------------------
+# parent / subsidiary resolution (spec §28)
+# --------------------------------------------------------------------------
+
+def test_a_subsidiary_is_linked_to_a_known_parent(session: Session, db_engine) -> None:
+    """A link, not a merge: the subsidiary keeps its own signals and contacts."""
+    ingest_documents(
+        [_document(url="https://a.test/1", content="Parent story. " + _LONG_BODY)],
+        StubProvider(_strong_extraction(company_name="Elsewedy Electric")),
+    )
+    ingest_documents(
+        [_document(url="https://a.test/2", content="Subsidiary story. " + _LONG_BODY)],
+        StubProvider(
+            _strong_extraction(
+                company_name="Elsewedy Electric for Trading and Distribution",
+                company_domain=None,
+                signal_title="A distribution subsidiary announcement",
+            )
+        ),
+    )
+    companies = {c.name: c for c in session.scalars(select(Company)).all()}
+    assert len(companies) == 2
+    child = companies["Elsewedy Electric for Trading and Distribution"]
+    parent = companies["Elsewedy Electric"]
+    assert child.parent_company_id == parent.id
+    assert parent.parent_company_id is None
+
+
+def test_unrelated_companies_are_not_linked(session: Session, db_engine) -> None:
+    """One shared word is not a corporate relationship."""
+    ingest_documents(
+        [_document(url="https://a.test/1", content="First. " + _LONG_BODY)],
+        StubProvider(_strong_extraction(company_name="Misr Insurance")),
+    )
+    ingest_documents(
+        [_document(url="https://a.test/2", content="Second. " + _LONG_BODY)],
+        StubProvider(
+            _strong_extraction(
+                company_name="Misr Fertilizers Production Company",
+                company_domain=None,
+                signal_title="A fertilizer announcement",
+            )
+        ),
+    )
+    for company in session.scalars(select(Company)).all():
+        assert company.parent_company_id is None
+
+
+def test_a_company_is_never_its_own_parent(session: Session, db_engine) -> None:
+    from app.services.companies import link_parent
+
+    company = make_company(session, "Elsewedy Electric for Trading and Distribution")
+    session.commit()
+    assert link_parent(session, company) is None
+    assert company.parent_company_id is None
+
+
+def test_the_longest_matching_parent_wins(session: Session, db_engine) -> None:
+    """With an intermediate holding company, attach to the nearer one."""
+    from app.services.companies import link_parent
+
+    make_company(session, "Elsewedy Electric")
+    nearer = make_company(session, "Elsewedy Electric Industries")
+    session.commit()
+
+    child = make_company(session, "Elsewedy Electric Industries Cables Division")
+    session.commit()
+    link_parent(session, child)
+    assert child.parent_company_id == nearer.id

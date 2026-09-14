@@ -19,6 +19,7 @@ from app.domain.enums import (
     Department,
     EmailStatus,
     EvidenceLevel,
+    IngestMode,
     OpportunityStatus,
     OpportunityType,
     OpportunityWindow,
@@ -58,6 +59,7 @@ def make_source(
     source_type: SourceType = SourceType.COMPANY,
     published_at: datetime | None = None,
     confidence: float = 0.9,
+    ingest_mode: IngestMode = IngestMode.AUTOMATED,
 ) -> Source:
     url = url or f"https://example.test/{uuid.uuid4().hex}"
     source = Source(
@@ -70,6 +72,7 @@ def make_source(
         confidence=Decimal(str(confidence)),
         content_hash=content_hash(uuid.uuid4().hex),
         adapter_key="test",
+        ingest_mode=ingest_mode,
     )
     session.add(source)
     session.flush()
@@ -144,6 +147,7 @@ def make_opportunity(
     created_at: datetime | None = None,
     score_changed_at: datetime | None = None,
     base_score: int | None = None,
+    ingest_mode: IngestMode = IngestMode.AUTOMATED,
 ) -> Opportunity:
     """Create a fully-formed opportunity at an exact score.
 
@@ -155,7 +159,7 @@ def make_opportunity(
         company = make_company(
             session, company_name or f"Company {uuid.uuid4().hex[:8]}", sector=sector
         )
-    source = make_source(session, published_at=published)
+    source = make_source(session, published_at=published, ingest_mode=ingest_mode)
     signal = make_signal(
         session,
         company,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -11,7 +12,13 @@ from sqlalchemy.orm import Session
 from app.domain.enums import OpportunityStatus
 from app.models import Contact, Opportunity, Source
 from tests.conftest import requires_db
-from tests.factories import make_company, make_contact, make_opportunity
+from tests.factories import (
+    make_company,
+    make_contact,
+    make_opportunity,
+    make_signal,
+    make_source,
+)
 
 pytestmark = requires_db
 
@@ -264,8 +271,13 @@ def test_documents_can_be_submitted_directly(client: TestClient, session: Sessio
                 {
                     "url": "https://elsewedy.test/news/1",
                     "title": "Elsewedy Electric unveils a new product line",
-                    "content": "Elsewedy Electric announced the launch of a new product line. "
-                               "The CEO said the rollout is scheduled for next month.",
+                    "content": (
+                        "Elsewedy Electric announced the launch of a new product line at a "
+                        "briefing in Cairo. The company said the products will be built at "
+                        "its Egyptian plants and taken to market with its distribution "
+                        "partners. The CEO said the rollout is scheduled for next month and "
+                        "that customer briefings would accompany the commercial launch."
+                    ),
                     "source_type": "COMPANY",
                     "publisher": "Elsewedy Electric",
                     "company_hint": "Elsewedy Electric",
@@ -287,7 +299,13 @@ def test_submitting_the_same_document_twice_is_deduplicated(client: TestClient) 
             {
                 "url": "https://a.test/1",
                 "title": "A partnership was announced",
-                "content": "Two firms announced a strategic partnership in Cairo.",
+                "content": (
+                    "Two firms announced a strategic partnership in Cairo, according to a "
+                    "statement issued by both companies. The agreement covers joint "
+                    "delivery of industrial projects in Egypt and was signed by the "
+                    "chairman of each group. Management said the partnership would be "
+                    "presented to customers and partners over the coming weeks."
+                ),
                 "source_type": "BUSINESS_PUBLICATION",
             }
         ]
@@ -455,3 +473,292 @@ def test_openapi_documents_every_endpoint(client: TestClient) -> None:
                  "/api/v1/ingest/contacts", "/api/v1/maintenance/rescore",
                  "/health/live", "/health/ready"):
         assert path in spec["paths"], path
+
+
+# --------------------------------------------------------------------------
+# search and sorting (spec §22)
+# --------------------------------------------------------------------------
+
+def test_search_matches_company_name(client: TestClient, session: Session) -> None:
+    make_opportunity(session, score=90, company_name="Elsewedy Electric")
+    make_opportunity(session, score=88, company_name="Juhayna Food Industries")
+    body = client.get("/api/v1/opportunities/top50", params={"search": "elsewedy"}).json()
+    assert [i["company"]["name"] for i in body["items"]] == ["Elsewedy Electric"]
+
+
+def test_search_matches_contact_name_and_email(client: TestClient, session: Session) -> None:
+    """Searching by the person you remember, not the company you forgot."""
+    company = make_company(session, "Elsewedy Electric")
+    make_contact(session, company, name="Ahmed Hassan", email="a.hassan@elsewedy.test")
+    make_opportunity(session, company=company, score=90)
+    make_opportunity(session, score=92, company_name="Other Holdings")
+
+    by_name = client.get("/api/v1/opportunities/top50", params={"search": "Ahmed"}).json()
+    assert [i["company"]["name"] for i in by_name["items"]] == ["Elsewedy Electric"]
+
+    by_email = client.get("/api/v1/opportunities/top50", params={"search": "a.hassan@"}).json()
+    assert [i["company"]["name"] for i in by_email["items"]] == ["Elsewedy Electric"]
+
+
+def test_search_returns_one_row_per_opportunity(client: TestClient, session: Session) -> None:
+    """Three matching contacts must not triple the opportunity."""
+    company = make_company(session, "Elsewedy Electric")
+    for index in range(3):
+        make_contact(session, company, name=f"Ahmed Hassan {index}",
+                     email=f"ahmed{index}@elsewedy.test")
+    make_opportunity(session, company=company, score=90)
+    body = client.get("/api/v1/opportunities/top50", params={"search": "Ahmed"}).json()
+    assert body["returned"] == 1
+
+
+def test_search_finds_nothing_for_an_unknown_term(client: TestClient, session: Session) -> None:
+    make_opportunity(session, score=90, company_name="Elsewedy Electric")
+    body = client.get("/api/v1/opportunities/top50", params={"search": "zzzznothing"}).json()
+    assert body["returned"] == 0
+
+
+@pytest.mark.parametrize(
+    "sort",
+    ["score", "event_probability", "commercial_value", "contact_quality",
+     "timing_score", "evidence_score", "created_at", "company"],
+)
+def test_every_sort_field_works(client: TestClient, session: Session, sort: str) -> None:
+    make_opportunity(session, score=90, company_name="Beta Holdings")
+    make_opportunity(session, score=80, company_name="Alpha Industries")
+    response = client.get("/api/v1/opportunities/top50", params={"sort": sort})
+    assert response.status_code == 200
+    assert response.json()["returned"] == 2
+
+
+def test_sort_by_company_ascending(client: TestClient, session: Session) -> None:
+    make_opportunity(session, score=90, company_name="Zeta Holdings")
+    make_opportunity(session, score=80, company_name="Alpha Industries")
+    body = client.get(
+        "/api/v1/opportunities/top50", params={"sort": "company", "order": "asc"}
+    ).json()
+    assert [i["company"]["name"] for i in body["items"]] == [
+        "Alpha Industries", "Zeta Holdings"
+    ]
+
+
+def test_sort_order_is_honoured(client: TestClient, session: Session) -> None:
+    for score in (95, 75, 85):
+        make_opportunity(session, score=score)
+    ascending = client.get(
+        "/api/v1/opportunities/top50", params={"sort": "score", "order": "asc"}
+    ).json()
+    assert [i["score"] for i in ascending["items"]] == [75, 85, 95]
+
+
+def test_invalid_sort_and_order_are_rejected(client: TestClient) -> None:
+    assert client.get(
+        "/api/v1/opportunities/top50", params={"sort": "nonsense"}
+    ).status_code == 422
+    assert client.get(
+        "/api/v1/opportunities/top50", params={"order": "sideways"}
+    ).status_code == 422
+
+
+def test_rank_reflects_the_current_ordering(client: TestClient, session: Session) -> None:
+    make_opportunity(session, score=90, company_name="Beta Holdings")
+    make_opportunity(session, score=80, company_name="Alpha Industries")
+    body = client.get(
+        "/api/v1/opportunities/top50", params={"sort": "company", "order": "asc"}
+    ).json()
+    assert [(i["rank"], i["company"]["name"]) for i in body["items"]] == [
+        (1, "Alpha Industries"), (2, "Beta Holdings")
+    ]
+
+
+# --------------------------------------------------------------------------
+# the three statements and provenance on the wire
+# --------------------------------------------------------------------------
+
+def test_detail_carries_the_three_statements(client: TestClient, session: Session) -> None:
+    from app.models import Opportunity as Opp
+
+    opportunity = make_opportunity(session, score=90)
+    stored = session.get(Opp, opportunity.id)
+    assert stored is not None
+    stored.fact = "The source states the partnership was signed."
+    stored.inference = "A signing of this kind would typically be marked publicly."
+    stored.prediction = "A ceremony may follow. Not confirmed."
+    session.commit()
+
+    body = client.get(f"/api/v1/opportunities/{opportunity.id}").json()
+    assert body["fact"].startswith("The source states")
+    assert "typically" in body["inference"]
+    assert "Not confirmed" in body["prediction"]
+
+
+def test_source_provenance_is_exposed(client: TestClient, session: Session) -> None:
+    make_opportunity(session, score=90)
+    item = client.get("/api/v1/opportunities/top50").json()["items"][0]
+    assert item["signal"]["source"]["ingest_mode"] == "AUTOMATED"
+    assert item["signal"]["source"]["source_url"]
+    assert 0.0 <= item["signal"]["source"]["confidence"] <= 1.0
+
+
+def test_test_data_is_hidden_unless_asked_for(client: TestClient, session: Session) -> None:
+    from app.domain.enums import IngestMode
+
+    make_opportunity(session, score=88, company_name="Real Corp")
+    make_opportunity(session, score=95, company_name="Fixture Corp",
+                     ingest_mode=IngestMode.TEST)
+
+    default_view = client.get("/api/v1/opportunities/top50").json()
+    assert [i["company"]["name"] for i in default_view["items"]] == ["Real Corp"]
+
+    with_test = client.get(
+        "/api/v1/opportunities/top50", params={"include_test": "true"}
+    ).json()
+    assert [i["company"]["name"] for i in with_test["items"]] == ["Fixture Corp", "Real Corp"]
+
+
+# --------------------------------------------------------------------------
+# company profile (spec §24)
+# --------------------------------------------------------------------------
+
+def test_company_profile_has_everything_an_am_needs(
+    client: TestClient, session: Session
+) -> None:
+    company = make_company(session, "Elsewedy Electric", sector="Industrial")
+    make_contact(session, company)
+    make_opportunity(session, company=company, score=88)
+
+    body = client.get(f"/api/v1/companies/{company.id}").json()
+    assert body["sector"] == "Industrial"
+    assert body["account_score"] == 88
+    assert body["qualified_opportunity_count"] == 1
+    assert len(body["opportunities"]) == 1
+    assert len(body["recent_signals"]) == 1
+    assert len(body["contacts"]) == 1
+    assert body["parent"] is None
+    assert body["subsidiaries"] == []
+
+
+def test_company_event_history_is_only_reported_events(
+    client: TestClient, session: Session
+) -> None:
+    """No event history is honest; inventing one is not."""
+    from app.domain.enums import SignalType
+
+    company = make_company(session, "Elsewedy Electric")
+    make_opportunity(session, company=company, score=80)
+    body = client.get(f"/api/v1/companies/{company.id}").json()
+    assert body["event_history"] == []
+
+    source = make_source(session)
+    make_signal(session, company, source, signal_type=SignalType.CONFERENCE,
+                title="Elsewedy hosts annual technical conference")
+    session.commit()
+    body = client.get(f"/api/v1/companies/{company.id}").json()
+    assert len(body["event_history"]) == 1
+
+
+def test_company_shows_its_parent_and_subsidiaries(
+    client: TestClient, session: Session
+) -> None:
+    parent = make_company(session, "Elsewedy Electric")
+    child = make_company(session, "Elsewedy Electric for Trading and Distribution")
+    child.parent_company_id = parent.id
+    session.commit()
+
+    child_body = client.get(f"/api/v1/companies/{child.id}").json()
+    assert child_body["parent"]["name"] == "Elsewedy Electric"
+
+    parent_body = client.get(f"/api/v1/companies/{parent.id}").json()
+    assert [s["name"] for s in parent_body["subsidiaries"]] == [
+        "Elsewedy Electric for Trading and Distribution"
+    ]
+
+
+# --------------------------------------------------------------------------
+# new ingestion endpoints
+# --------------------------------------------------------------------------
+
+def test_analyst_signal_endpoint(client: TestClient, session: Session) -> None:
+    response = client.post(
+        "/api/v1/ingest/signals",
+        json={
+            "source_url": "https://sis.gov.eg/en/media-center/news/example/",
+            "source_title": "PM witnesses signing of a major agreement",
+            "source_type": "GOVERNMENT",
+            "publisher": "State Information Service",
+            "published_at": "2026-09-10T00:00:00Z",
+            "confidence": 0.95,
+            "content": (
+                "The State Information Service reports that the Prime Minister witnessed "
+                "the signing of a major agreement between a consortium of companies to "
+                "build new industrial capacity in Egypt, with investment of USD 200 "
+                "million and a partnership covering technology transfer and local "
+                "manufacturing across several governorates."
+            ),
+            "extraction": {
+                "company_name": "Example Industrial Group",
+                "company_sector": "Industrial",
+                "signal_type": "PARTNERSHIP",
+                "signal_title": "Example Industrial Group signs a major partnership",
+                "possible_event": True,
+                "event_type": "PARTNER_EVENT",
+                "event_probability": 70,
+                "commercial_value": 75,
+                "opportunity_window": "DAYS_30_60",
+                "fact": "The source states the agreement was signed before the Prime Minister.",
+                "inference": "A signing of this scale is normally marked publicly.",
+                "prediction": "A ceremony may follow. Not confirmed.",
+                "why_now": "The agreement is recent and government-witnessed.",
+                "sales_angle": "Signing ceremony production and VIP management.",
+                "recommended_services": ["EVENT_MANAGEMENT", "VIP_MANAGEMENT"],
+                "recommended_action": "CONTACT_COMMUNICATIONS",
+                "confidence": 0.9,
+            },
+        },
+    )
+    assert response.status_code == 200
+    stats = response.json()
+    assert stats["signals_created"] == 1
+    assert stats["opportunities_created"] == 1
+
+    item = client.get("/api/v1/opportunities").json()[0]
+    assert item["signal"]["source"]["ingest_mode"] == "ANALYST"
+    assert item["fact"].startswith("The source states")
+
+
+def test_analyst_signal_requires_a_source_url(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/ingest/signals",
+        json={"content": "x", "extraction": {"company_name": "X"}},
+    )
+    assert response.status_code == 422
+
+
+def test_analyst_extraction_is_schema_validated(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/ingest/signals",
+        json={
+            "source_url": "https://a.test/1",
+            "content": "some content long enough to pass nothing in particular",
+            "extraction": {"company_name": "X", "event_probability": 500},
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_contact_discovery_endpoint_with_no_sources(client: TestClient) -> None:
+    response = client.post("/api/v1/ingest/contacts/discover", json={})
+    assert response.status_code == 200
+    assert response.json()["contacts_found"] == 0
+
+
+def test_scheduler_status_endpoint(client: TestClient) -> None:
+    body = client.get("/api/v1/maintenance/scheduler").json()
+    assert body["enabled"] is False
+    assert "interval_hours" in body
+
+
+def test_manual_cycle_endpoint(client: TestClient) -> None:
+    body = client.post("/api/v1/maintenance/cycle").json()
+    assert body["error"] is None
+    for stage in ("ingestion", "contacts", "rescore"):
+        assert stage in body

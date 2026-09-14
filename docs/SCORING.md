@@ -275,7 +275,27 @@ Two rules matter more than the arithmetic:
 
 ---
 
-## 9. Tuning
+## 9. When scores are recomputed
+
+Three triggers, each recomputing only what actually changed:
+
+| Trigger | What is recomputed |
+|---|---|
+| ingestion of a new source for an existing signal | everything, from the new extraction |
+| contact discovery or contact ingestion | `CONTACT_QUALITY` and the weighted total for that company's open opportunities, once per company after all its contacts are attached |
+| `rescore` (daily) | the decay factor and the total, from the stored `base_score` |
+
+The daily `rescore` deliberately does **not** re-run extraction: the component
+scores depend on the source document, which has not changed, so re-extracting
+would cost an API call per opportunity per day and produce the same answer. It also
+recomputes from `base_score` rather than from the last decayed score — compounding
+decay would sink everything to the floor within days.
+
+Note that the relevance gate (`services/relevance.py`) sits *before* scoring
+entirely. It is not part of the score; it decides whether a document is worth
+extracting at all.
+
+## 10. Tuning
 
 `config.py` is the single place to change behaviour. In rough order of leverage:
 
@@ -286,3 +306,7 @@ Two rules matter more than the arithmetic:
 5. `CONTACT_QUALITY_FLOOR` — how much a contactless opportunity is punished.
 
 Change one at a time and compare Top 50 membership before and after.
+
+`RELEVANCE_MIN_SCORE` is a separate lever with a different failure mode: raising it
+saves extraction cost but silently drops real opportunities before they are ever
+scored. It is tuned to be generous on the way in for exactly that reason.

@@ -10,57 +10,58 @@ One job:
 > **Find the 50 corporate sales opportunities most likely to generate event
 > business for PARADIGM.**
 
-It reads public sources, detects recent business signals, infers whether each
-signal implies a realistic corporate event, identifies the people who would own
-that spend, scores the opportunity, and maintains a live ranked Top 50.
+It reads public sources, drops the noise, detects recent business signals, infers
+whether each implies a realistic corporate event, identifies the people who own
+that spend, scores the opportunity deterministically, and maintains a live ranked
+Top 50.
 
 ```
-SOURCE → SIGNAL → COMPANY → EVENT OPPORTUNITY → CONTACT → SCORE → TOP 50
+SOURCE → RELEVANCE → SIGNAL → COMPANY → EVENT OPPORTUNITY → CONTACT → SCORE → TOP 50
 ```
 
-It is **not** a generic scraper, **not** a contact database, and **not** a CRM
-replacement. It is a corporate event opportunity intelligence engine.
+An Account Manager opens it and sees, for each opportunity: who to contact, why
+now, what happened, what event could result, what PARADIGM could sell, when to
+approach, and how strong it is.
+
+It is **not** a CRM, **not** a scraper, and **not** a contact database.
 
 ## Principles
 
-- **Quality over volume.** Only opportunities scoring 70+ qualify. If 23 qualify,
-  the Top 50 has 23 rows — empty slots are never padded with weak leads.
+- **Quality over volume.** Only opportunities scoring 70+ qualify. If 17 qualify,
+  the Top 50 shows 17 — empty slots are never padded.
 - **Facts are labelled.** Every opportunity carries an `assertion_level` of `FACT`,
-  `INFERENCE` or `PREDICTION`. A predicted event is never presented as confirmed.
+  `INFERENCE` or `PREDICTION`, plus three separate `fact` / `inference` /
+  `prediction` fields. A predicted event is never presented as confirmed.
 - **Nothing is invented.** No emails, phone numbers, LinkedIn profiles, job titles,
   companies, relationships or budgets are ever synthesised. Missing evidence is
-  recorded as `UNKNOWN`, and `UNKNOWN` always scores below `MEDIUM`.
+  `UNKNOWN`, and `UNKNOWN` always scores below `MEDIUM`.
 - **AI reasons, code scores.** AI turns prose into structured evidence. The ranking
-  itself is deterministic, weighted and configurable, so it is reproducible and
-  auditable.
-- **Public information only.** Contacts are professional business contacts drawn
-  from public sources, each with a `source_url`.
+  is deterministic, weighted and configurable — reproducible and auditable. The
+  model's own estimate is one factor at weight 0.10.
+- **Real and test data never mix.** Every source carries `AUTOMATED`, `ANALYST` or
+  `TEST` provenance, and the API excludes `TEST` by default.
+- **Public information only.** Contacts are professional business contacts from
+  public pages, each with a `source_url` and an explicit `email_status`.
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # then set POSTGRES_PASSWORD
+cp .env.example .env          # set POSTGRES_PASSWORD, and API_KEY if not local
 docker compose up -d --build  # postgres + api + web
 ```
 
-- API: <http://localhost:8000> — docs at `/docs`
 - Web: <http://localhost:3000>
+- API: <http://localhost:8000> — interactive docs at `/docs`
 - Health: `/health/live`, `/health/ready`
 
-Migrations run automatically on API start. To run them by hand:
-
-```bash
-docker compose exec api alembic upgrade head
-```
+Migrations run automatically on API start.
 
 ### Local development without Docker
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e 'backend[dev]'
-
+make venv                     # virtualenv + editable install
 export DATABASE_URL=postgresql+psycopg://paradigm:paradigm@127.0.0.1:5432/paradigm
-alembic -c backend/alembic.ini upgrade head
+make migrate
 uvicorn app.main:app --app-dir backend --reload
 ```
 
@@ -70,116 +71,130 @@ cd frontend && npm install && npm run dev
 
 ## Running the pipeline
 
-The CLI is the scheduling surface — point cron at it.
-
 ```bash
-python -m app.cli ingest              # fetch configured sources, extract, score
-python -m app.cli ingest --source egypt-business-news
-python -m app.cli rescore             # re-apply decay, refresh the Top 50
-python -m app.cli brief               # print today's daily brief as JSON
-python -m app.cli sources             # list configured sources
+python -m app.cli ingest                      # fetch sources, filter, extract, score
+python -m app.cli ingest --source sis-egypt    # one source
+python -m app.cli discover-contacts            # read public contact pages
+python -m app.cli cycle                        # ingest + contacts + decay
+python -m app.cli rescore                      # re-apply decay only
+python -m app.cli brief                        # today's brief as JSON
+python -m app.cli sources                      # list configured sources
+python -m app.cli status                       # config, counts, provenance split
 ```
 
-A sensible crontab:
+Recurring refresh is either a cron entry calling `cycle`:
 
 ```cron
-0 5 * * *  cd /srv/paradigm && python -m app.cli ingest  >> /var/log/paradigm/ingest.log 2>&1
-30 5 * * * cd /srv/paradigm && python -m app.cli rescore >> /var/log/paradigm/rescore.log 2>&1
+0 5 * * *  cd /srv/paradigm && python -m app.cli cycle >> /var/log/paradigm/cycle.log 2>&1
 ```
 
-## Key endpoints
+…or the in-process scheduler (`SCHEDULER_ENABLED=true`,
+`SCHEDULER_INTERVAL_HOURS=6`). Both run the same function; pick one.
+
+## Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/v1/opportunities/top50` | the Top 50, filterable |
+| `GET` | `/api/v1/opportunities/top50` | the Top 50, filtered, sorted, searchable |
 | `GET` | `/api/v1/opportunities` | all opportunities, paginated |
-| `GET` | `/api/v1/opportunities/{id}` | full detail with company, signal, source, contacts |
-| `PATCH` | `/api/v1/opportunities/{id}` | update status only |
-| `GET` | `/api/v1/companies` · `/{id}` | companies |
+| `GET` | `/api/v1/opportunities/{id}` | full detail with company, signal, source, all contacts |
+| `PATCH` | `/api/v1/opportunities/{id}` | update status (the only mutable field) |
+| `GET` | `/api/v1/companies` · `/{id}` | company list and profile |
+| `GET` | `/api/v1/companies/sectors` | configured sectors |
 | `GET` | `/api/v1/brief/daily` | new / upgraded / downgraded / expired / current Top 50 |
 | `POST` | `/api/v1/ingest/run` | run configured source adapters |
-| `POST` | `/api/v1/ingest/documents` | submit raw documents directly |
-| `POST` | `/api/v1/ingest/contacts` | submit publicly-sourced contacts (`source_url` required) |
+| `POST` | `/api/v1/ingest/documents` | submit raw documents |
+| `POST` | `/api/v1/ingest/signals` | submit an analyst-verified signal (`source_url` required) |
+| `POST` | `/api/v1/ingest/contacts` | submit public contacts (`source_url` required) |
+| `POST` | `/api/v1/ingest/contacts/discover` | run configured contact sources |
+| `POST` | `/api/v1/maintenance/cycle` | run one full refresh now |
 | `POST` | `/api/v1/maintenance/rescore` | re-apply decay |
+| `GET` | `/api/v1/maintenance/scheduler` | scheduler status and last cycle |
 
-Filters on the opportunity endpoints: `sector`, `min_score`, `max_score`, `status`,
-`type`, `classification`, `date_from`, `date_to`.
+Query parameters on the opportunity endpoints: `sector`, `min_score`, `max_score`,
+`status`, `type`, `classification`, `date_from`, `date_to`, `search`, `sort`,
+`order`, `include_test`.
+
+## Access control
+
+`/api/v1` requires `API_KEY`, sent as `X-API-Key` or `Authorization: Bearer`.
+Health probes are always open. If `API_KEY` is unset the API is open — allowed
+under `APP_ENV=development`, and **refused** otherwise, so it cannot become the
+silent production default. The frontend calls the API server-side, so the key is
+never sent to a browser.
 
 ## Configuring sources
 
-`config/sources.json` — data, not code:
+`config/sources.json` — data, not code. Each entry sets its adapter, trust tier,
+priority, rate limit, document cap and adapter options.
 
-```json
-{
-  "sources": [
-    {
-      "key": "example-newsroom",
-      "adapter": "rss",
-      "source_type": "COMPANY",
-      "publisher": "Example Corp",
-      "enabled": true,
-      "confidence": 0.9,
-      "options": { "feed_url": "https://example.com/news/rss" }
-    }
-  ]
-}
-```
-
-Adapters shipped: `rss` (any RSS/Atom feed) and `jsonl` (local newline-delimited
-JSON, for analyst-supplied material). No feeds are enabled by default — the file
-ships with commented examples so the repository makes no claim about sources whose
-terms have not been checked.
+**No source is enabled by default, on purpose.** The file ships eight real,
+curated Egyptian and regional candidates, all disabled, because the spec permits
+marking a source active only once it demonstrably works — and this repository was
+built in an environment with no outbound access to public sites, so none of those
+URLs has been confirmed. The file documents the four-step check to enable one.
 
 ## AI provider
 
 `AI_PROVIDER=anthropic` uses the Claude Messages API and requires
-`ANTHROPIC_API_KEY`. Responses are validated against a Pydantic schema; anything
-that fails validation is discarded and logged, never stored.
+`ANTHROPIC_API_KEY`; the tool schema is generated from the Pydantic model so the
+output contract and the validation contract cannot drift. Responses that fail
+validation are discarded and logged, never partially salvaged. A missing key is
+logged as an error at startup rather than silently producing nothing.
 
 `AI_PROVIDER=rule_based` is a deterministic keyword extractor with no network
-calls, used for tests and offline development. It is **not** an AI stand-in and is
-labelled as such in its output confidence — do not run production ranking on it.
+calls, for tests and offline development. It is **not** an AI stand-in: it performs
+no entity recognition, reports no company without an explicit hint, offers no
+probability estimate, caps its confidence at 0.45, and stamps `extractor:
+rule_based` on everything it produces. Do not rank production opportunities on it.
 
 ## Tests
 
 ```bash
-pytest backend/tests -q                  # unit tests, no database needed
-TEST_DATABASE_URL=postgresql+psycopg://paradigm:paradigm@127.0.0.1:5432/paradigm_test \
-  pytest backend/tests -q                # adds integration tests
+make test-unit    # 274 tests, no database required
+make test         # 408 tests, adds integration tests against real PostgreSQL
+make lint
 ```
 
-Integration tests skip themselves cleanly when `TEST_DATABASE_URL` is unset.
+Integration tests skip cleanly when `TEST_DATABASE_URL` is unset, so `pytest` is
+always runnable.
 
 ## Repository layout
 
 ```
 backend/
   app/
-    api/        HTTP routes
-    domain/     enums and value objects
-    models/     SQLAlchemy tables
+    api/        HTTP routes + access control
+    domain/     enums and controlled vocabularies
+    models/     SQLAlchemy tables (five)
     schemas/    Pydantic request/response models
-    services/   pipeline, normalization, dedupe, brief, rescore
-    sources/    source adapter framework
+    services/   pipeline, relevance, normalize, dedupe, brief, rescore, scheduler
+    sources/    adapter framework, FetchClient, RSS / JSONL / contact pages
     ai/         extraction provider abstraction
     scoring/    the deterministic score engine
   alembic/      migrations
   tests/
-frontend/       Next.js Top 50 view
+frontend/       Next.js: Top 50, opportunity detail, company profile, daily brief
 config/         source registry
+data/real/      real analyst-submitted signals, with their citations
 docs/           ARCHITECTURE · DATA_MODEL · SCORING · ROADMAP
 ```
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — shape, pipeline, AI/code split
-- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — the five tables, constraints, normalization
-- [`docs/SCORING.md`](docs/SCORING.md) — every weight and constant, and how to tune
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what comes next and what is out of scope
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — shape, pipeline, AI/code split, provenance
+- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — the five tables, constraints, normalization, migrations
+- [`docs/SCORING.md`](docs/SCORING.md) — every weight and constant, when scores recompute, how to tune
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is implemented, the known gaps and why, what comes next
+
+`ROADMAP.md` is the honest inventory: it states plainly which parts have been run
+against real data and which have not.
 
 ## Data handling
 
 Only publicly available professional and business information is collected.
-Contacts are stored with provenance and an explicit `email_status`; an inferred
-address is never recorded as verified. The system does not send outreach — it
-recommends an action for a human to take.
+Authentication, paywalls and access controls are never bypassed; rate limits and
+`Retry-After` are respected. Contacts are stored with provenance and an explicit
+`email_status`, and a `VERIFIED` claim is rejected at the API boundary because V1
+has no verification step. The system does not send outreach — it recommends an
+action for a human to take.

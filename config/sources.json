@@ -2,20 +2,111 @@
   "_comment": [
     "Source registry for PARADIGM INTELLIGENCE. Data, not code.",
     "",
-    "Each entry: key (unique), adapter ('rss' or 'jsonl'), source_type (trust tier),",
-    "publisher, enabled, confidence (0-1, confidence in the SOURCE not the content),",
-    "company_hint (set when the feed belongs to one company), and adapter options.",
+    "Fields per entry:",
+    "  key                    unique identifier, used by --source and the API",
+    "  adapter                rss | jsonl | contact_page",
+    "  source_type            trust tier (see below)",
+    "  publisher              display name",
+    "  enabled                whether a normal run includes it",
+    "  confidence             0-1, confidence in the SOURCE, not in any one story",
+    "  priority               0-100, higher runs first so the strongest source",
+    "                         claims a story before a weaker one does",
+    "  rate_limit_per_minute  per-host politeness budget",
+    "  max_docs               per-run cap (falls back to INGEST_MAX_DOCS_PER_SOURCE)",
+    "  company_hint           set when a feed belongs to exactly one company",
+    "  notes                  free text for operators, e.g. why it is disabled",
+    "  options                adapter-specific (rss: feed_url, jsonl: path,",
+    "                         contact_page: url + company)",
     "",
-    "source_type values, highest trust first: COMPANY, GOVERNMENT, PROCUREMENT,",
+    "source_type, highest trust first: COMPANY, GOVERNMENT, PROCUREMENT,",
     "BUSINESS_PUBLICATION, INDUSTRY_PUBLICATION, EVENT, PUBLIC_PROFILE, OTHER.",
     "",
-    "No live feeds are enabled by default. Before enabling one, confirm its terms of",
-    "use, rate limits and redistribution rights - this repository makes no claim",
-    "about sources that have not been checked. See docs/ROADMAP.md.",
+    "EVERY ENTRY BELOW IS DISABLED, deliberately.",
     "",
-    "The two examples below are disabled templates. Copy, edit, set enabled: true."
+    "Spec rule: only mark a source active if it actually works. These are real,",
+    "high-value Egyptian and regional candidates, but none has been verified from",
+    "this repository - the build environment has no outbound network access to",
+    "public sites, so no feed URL here has been confirmed to resolve, to be a",
+    "valid feed, or to permit automated access.",
+    "",
+    "Before enabling one, do all four:",
+    "  1. Fetch the feed and confirm it parses:  python -m app.cli ingest --source KEY",
+    "  2. Read its terms of use and robots.txt, and confirm automated access is",
+    "     permitted for this purpose.",
+    "  3. Confirm the rate limit here is within what the publisher allows.",
+    "  4. Set enabled: true and clear the note.",
+    "",
+    "Government and official procurement portals are the highest-value sources for",
+    "Egyptian corporate signals and are tracked in docs/ROADMAP.md. They are not",
+    "listed as RSS entries because most publish HTML rather than feeds and need a",
+    "purpose-built adapter, which must not be written speculatively."
   ],
   "sources": [
+    {
+      "key": "sis-egypt",
+      "adapter": "rss",
+      "source_type": "GOVERNMENT",
+      "publisher": "State Information Service (Egypt)",
+      "enabled": false,
+      "confidence": 0.95,
+      "priority": 95,
+      "rate_limit_per_minute": 10,
+      "max_docs": 40,
+      "notes": "UNVERIFIED. Official state news service; carries ministry-witnessed signings and openings. Confirm a feed endpoint exists before enabling - the site may be HTML only, in which case it needs an adapter, not this entry.",
+      "options": { "feed_url": "https://sis.gov.eg/rss" }
+    },
+    {
+      "key": "mcit-egypt",
+      "adapter": "rss",
+      "source_type": "GOVERNMENT",
+      "publisher": "Ministry of Communications and Information Technology (Egypt)",
+      "enabled": false,
+      "confidence": 0.95,
+      "priority": 92,
+      "rate_limit_per_minute": 10,
+      "max_docs": 30,
+      "notes": "UNVERIFIED. Strong for technology, telecom and data-centre signals. Confirm the feed path.",
+      "options": { "feed_url": "https://www.mcit.gov.eg/en/rss" }
+    },
+    {
+      "key": "daily-news-egypt",
+      "adapter": "rss",
+      "source_type": "BUSINESS_PUBLICATION",
+      "publisher": "Daily News Egypt",
+      "enabled": false,
+      "confidence": 0.75,
+      "priority": 70,
+      "rate_limit_per_minute": 15,
+      "max_docs": 50,
+      "notes": "UNVERIFIED. Broad Egyptian business coverage. Check terms of use before enabling.",
+      "options": { "feed_url": "https://www.dailynewsegypt.com/feed/" }
+    },
+    {
+      "key": "ahram-online-business",
+      "adapter": "rss",
+      "source_type": "BUSINESS_PUBLICATION",
+      "publisher": "Ahram Online",
+      "enabled": false,
+      "confidence": 0.75,
+      "priority": 68,
+      "rate_limit_per_minute": 15,
+      "max_docs": 50,
+      "notes": "UNVERIFIED. State-affiliated English coverage; good on state projects. Confirm the business-section feed id.",
+      "options": { "feed_url": "https://english.ahram.org.eg/rss/Portal/1.aspx" }
+    },
+    {
+      "key": "egypt-oil-and-gas",
+      "adapter": "rss",
+      "source_type": "INDUSTRY_PUBLICATION",
+      "publisher": "Egypt Oil & Gas",
+      "enabled": false,
+      "confidence": 0.7,
+      "priority": 60,
+      "rate_limit_per_minute": 12,
+      "max_docs": 30,
+      "notes": "UNVERIFIED. Sector-specific; strong on contract awards and project milestones in energy.",
+      "options": { "feed_url": "https://egyptoil-gas.com/feed/" }
+    },
     {
       "key": "example-company-newsroom",
       "adapter": "rss",
@@ -24,19 +115,24 @@
       "company_hint": "Example Corporation",
       "enabled": false,
       "confidence": 0.9,
-      "options": {
-        "feed_url": "https://example.com/newsroom/rss"
-      }
+      "priority": 90,
+      "rate_limit_per_minute": 10,
+      "notes": "TEMPLATE, not a real source. Copy this per target company. A company newsroom is the highest-trust tier and company_hint means the extractor never has to guess the company.",
+      "options": { "feed_url": "https://example.com/newsroom/rss" }
     },
     {
-      "key": "example-business-press",
-      "adapter": "rss",
-      "source_type": "BUSINESS_PUBLICATION",
-      "publisher": "Example Business Daily",
+      "key": "example-leadership-page",
+      "adapter": "contact_page",
+      "source_type": "COMPANY",
+      "publisher": "Example Corporation",
       "enabled": false,
-      "confidence": 0.75,
+      "confidence": 0.7,
+      "priority": 50,
+      "rate_limit_per_minute": 6,
+      "notes": "TEMPLATE, not a real source. Points at a company's own public leadership or press-contact page. Only reads what the page publishes; it never derives an address from a name pattern. The company must already exist in the database.",
       "options": {
-        "feed_url": "https://example.com/business/feed"
+        "url": "https://example.com/about/leadership",
+        "company": "Example Corporation"
       }
     },
     {
@@ -46,9 +142,9 @@
       "publisher": "Analyst supplied",
       "enabled": false,
       "confidence": 0.6,
-      "options": {
-        "path": "data/local/analyst-inbox.jsonl"
-      }
+      "priority": 40,
+      "notes": "Local newline-delimited JSON, for material an analyst supplies as documents. For a signal an analyst has already structured and verified, prefer POST /api/v1/ingest/signals, which records ANALYST provenance.",
+      "options": { "path": "data/local/analyst-inbox.jsonl" }
     }
   ]
 }

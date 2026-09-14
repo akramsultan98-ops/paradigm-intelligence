@@ -2,7 +2,7 @@
 
 ## Mission boundary
 
-PARADIGM INTELLIGENCE has exactly one V1 job: **maintain a ranked list of the 50
+PARADIGM INTELLIGENCE has exactly one job: **maintain a ranked list of the 50
 corporate sales opportunities most likely to generate event business for PARADIGM
 in Egypt.**
 
@@ -12,132 +12,184 @@ only to serve the Top 50.
 ## Shape
 
 A **modular monolith**. One FastAPI process, one PostgreSQL database, one Next.js
-read-only UI. No queues, no workers, no microservices, no Kubernetes. Scheduling
-is a cron entry that calls a CLI command.
+read-only UI. No queues, no workers, no microservices, no Kubernetes. Recurring
+work is either a background thread inside the API process or a cron entry calling
+the CLI — the same code either way.
 
 ```
-                    ┌──────────────────────────────────────────┐
-  external world    │              backend (FastAPI)           │
-  ──────────────    │                                          │
-  RSS / newsroom ──▶│  sources/   adapter framework            │
-  local JSONL    ──▶│      │                                   │
-                    │      ▼                                   │
-                    │  ai/        extraction (provider-agnostic)│
-                    │      │                                   │
-                    │      ▼                                   │
-                    │  services/  pipeline · dedupe · normalize │
-                    │      │                                   │
-                    │      ▼                                   │
-                    │  scoring/   deterministic score engine    │
-                    │      │                                   │
-                    │      ▼                                   │
-                    │  models/    SQLAlchemy  ──▶ PostgreSQL    │
-                    │      │                                   │
-                    │      ▼                                   │
-                    │  api/       /opportunities/top50, /brief  │
-                    └──────────────────────────────────────────┘
-                                        │
-                                        ▼
-                            frontend (Next.js) — Top 50 view
+                      ┌────────────────────────────────────────────┐
+  external world      │              backend (FastAPI)             │
+  ──────────────      │                                            │
+  RSS / newsroom  ───▶│  sources/    adapters + FetchClient        │
+  company pages   ───▶│      │       (timeout, retry, rate limit)  │
+  local JSONL     ───▶│      ▼                                     │
+  analyst intake  ───▶│  services/relevance.py   ◀── cheap gate    │
+                      │      │                                     │
+                      │      ▼                                     │
+                      │  ai/         extraction (provider-agnostic)│
+                      │      │       schema-validated              │
+                      │      ▼                                     │
+                      │  services/   pipeline · dedupe · normalize │
+                      │      │                                     │
+                      │      ▼                                     │
+                      │  scoring/    deterministic score engine    │
+                      │      │                                     │
+                      │      ▼                                     │
+                      │  models/     SQLAlchemy ──▶ PostgreSQL     │
+                      │      │                                     │
+                      │      ▼                                     │
+                      │  api/        top50 · detail · company ·    │
+                      │              brief · ingest · maintenance  │
+                      └────────────────────────────────────────────┘
+                                          │
+                                          ▼
+                    frontend (Next.js): Top 50 · detail · company · brief
 ```
 
 ## The pipeline
 
-The core logic is a single linear pass, implemented in
-`backend/app/services/pipeline.py`:
+One linear pass, in `backend/app/services/pipeline.py`:
 
 ```
-SOURCE → SIGNAL → COMPANY → EVENT OPPORTUNITY → CONTACT → SCORE → TOP 50
+SOURCE → RELEVANCE → SIGNAL → COMPANY → EVENT OPPORTUNITY → CONTACT → SCORE → TOP 50
 ```
 
 | Stage | Module | What happens |
 |---|---|---|
-| SOURCE | `sources/`, `services/sources.py` | An adapter yields a `RawDocument`. It is persisted as a `Source` row, deduplicated on normalized URL and content hash. |
-| extraction | `ai/` | The document is turned into a validated `Extraction`. Anything unevidenced comes back `UNKNOWN`. |
-| COMPANY | `services/companies.py` | The extracted company is resolved against existing companies by normalized name, then domain. Created only if new. |
-| SIGNAL | `services/signals.py` | A `Signal` row records the business fact, deduplicated per company. |
-| EVENT OPPORTUNITY | `services/opportunities.py` | If, and only if, the signal carries a realistic event implication, an `Opportunity` is created — always labelled `INFERENCE` or `PREDICTION`, never `FACT` unless the source announces a confirmed event. |
-| CONTACT | `services/contacts.py` | Contacts are attached from contact sources that carry a `source_url`. Contacts are never invented. |
+| SOURCE | `sources/`, `services/sources.py` | An adapter yields a `RawDocument` through `FetchClient` (timeout, bounded retry, per-host rate limit). Persisted as a `Source`, deduplicated on normalized URL **and** content hash. |
+| RELEVANCE | `services/relevance.py` | A cheap deterministic gate. Noise is dropped **before** any row is written and before the extractor is called, so a football report costs one keyword pass and nothing else. |
+| extraction | `ai/` | The document becomes a validated `Extraction`. Anything unevidenced comes back `UNKNOWN`. A response that fails validation is discarded, never partially salvaged. |
+| COMPANY | `services/companies.py` | Resolved against existing companies by domain, then normalized name. A known company mentioned verbatim in free text is *recognised*; nothing is ever invented. Subsidiaries are linked to parents, never merged. |
+| SIGNAL | `services/signals.py` | A `Signal` records the business fact, deduplicated per company on `sha256(company | type | normalized title)`. |
+| EVENT OPPORTUNITY | `services/opportunities.py` | Created only where a realistic event implication exists — labelled `INFERENCE` or `PREDICTION`, `FACT` only when an official source announces a confirmed event. |
+| CONTACT | `sources/contacts.py`, `services/contact_discovery.py` | Contacts are read from public company pages, or submitted with a mandatory `source_url`. Never synthesised. |
 | SCORE | `scoring/` | Deterministic, configurable, conservative. See `SCORING.md`. |
-| TOP 50 | `services/top50.py` | Score ≥ 70 qualifies; the highest 50 are the Top 50. Fewer than 50 qualifiers means a shorter list — never padding. |
+| TOP 50 | `services/top50.py` | Score ≥ 70 qualifies; the highest 50 are the Top 50. Fewer qualifiers means a shorter list, never padding. |
+
+Each document is processed in **its own transaction**, so one bad document costs
+one document rather than the run. One unreachable source, one unparseable feed
+entry and one failed extraction are all isolated the same way.
 
 ## Division of responsibility: AI vs. deterministic code
 
-This split is deliberate and load-bearing.
+Deliberate and load-bearing.
 
-**AI extracts and reasons.** It reads unstructured source text and returns
-structured evidence: what company, what kind of signal, whether an event is
-plausible, which department would own it, why it matters now, what PARADIGM could
-sell. It is also asked for its own `event_probability` and `commercial_value`
-estimates.
+**AI extracts and reasons.** It reads unstructured text and returns structured
+evidence: which company, what kind of signal, whether an event is plausible, which
+department owns it, why it matters now, what PARADIGM could sell. It is also asked
+for its own `event_probability` and `commercial_value` estimates.
 
 **Deterministic code scores and ranks.** The final `OPPORTUNITY_SCORE` is computed
-in `scoring/`, from named factors, using configurable weights. The AI's own
-estimates enter as *one weighted factor among many*, not as the answer. This keeps
-the ranking reproducible, auditable, and tunable without prompt archaeology.
+in `scoring/` from named factors with configurable weights. The AI's own estimates
+enter as *one weighted factor among eleven* (weight 0.10), not as the answer. A
+test asserts the AI estimate alone cannot drive a score.
 
-Every AI response is schema-validated against a Pydantic model. A response that
-does not validate is discarded and logged — it never reaches the database.
+Every AI response is schema-validated against a Pydantic model. Invalid responses
+are logged and dropped.
 
 ## Truth labelling
 
-Section 6 of the product spec forbids presenting a predicted event as confirmed,
-so the distinction is carried in the data model, not just in prose:
+Spec §6 forbids presenting a predicted event as confirmed, so the distinction
+lives in the schema rather than in prose:
 
-- `Signal.evidence_level` — `FACT` for what a source actually reports, `INFERENCE`
-  where the system read between the lines.
-- `Opportunity.assertion_level` — `PREDICTION` by default. Promoted to `INFERENCE`
-  when the signal strongly implies corporate activity. Only ever `FACT` when the
-  source itself announces a confirmed event (a conference, exhibition, seminar or
-  workshop) *and* the source is official.
+- `Signal.evidence_level` — `FACT` / `INFERENCE`.
+- `Opportunity.assertion_level` — `PREDICTION` by default; `INFERENCE` when the
+  signal strongly implies activity; `FACT` only when the source itself announces a
+  confirmed event **and** the source is official (company, government,
+  procurement). The same event reported second-hand is `INFERENCE`.
+- `Opportunity.fact` / `.inference` / `.prediction` — three separate columns, so
+  the UI renders them as visually distinct rows and cannot blur them.
 
-The API returns these fields and the UI renders them, so an Account Manager can
-never mistake a prediction for a booking.
+## Provenance: real vs. test data
+
+`Source.ingest_mode` is one of:
+
+| Mode | Meaning |
+|---|---|
+| `AUTOMATED` | fetched by a source adapter from a public source |
+| `ANALYST` | submitted by a person, with a mandatory public `source_url` |
+| `TEST` | fixtures |
+
+The API **excludes `TEST` by default**; `?include_test=true` reveals it. Fixtures
+can therefore exist in a database without ever reaching the operational Top 50
+(spec §37).
 
 ## Source adapters
 
-`sources/base.py` defines one small contract:
+Two contracts, because the outputs differ:
 
 ```python
-class SourceAdapter(ABC):
-    key: str
-    source_type: SourceType
-    def fetch(self, since: datetime | None) -> Iterable[RawDocument]: ...
+class SourceAdapter(ABC):        # yields documents
+    def fetch(self, since) -> Iterator[RawDocument]: ...
+
+class ContactSourceAdapter(ABC): # yields people
+    def discover(self) -> Iterator[DiscoveredContact]: ...
 ```
 
-Two adapters ship in V1, both real:
+Shipped and tested:
 
 - `RssSourceAdapter` — any RSS/Atom feed: company newsrooms, business press,
-  industry press, event listings. Which feeds exist is *configuration*
-  (`config/sources.json`), not code.
-- `JsonlFileSourceAdapter` — reads newline-delimited JSON documents from disk, for
-  manual and analyst-supplied material.
+  industry press, event listings. Which feeds exist is *configuration*.
+- `JsonlFileSourceAdapter` — newline-delimited JSON from disk, for
+  analyst-supplied material.
+- `ContactPageAdapter` — a company's own public leadership or press-contact page.
+  Reads only what the page publishes: it never derives an address from a
+  name-and-domain pattern, skips mailboxes with no route to event spend
+  (`webmaster@`, `ir@`, `support@`), and skips senior people whose role has no
+  relationship to events (a CFO). A departmental mailbox is kept but labelled as a
+  department, never as an invented person.
 
-The spec's source *categories* (CompanySource, GovernmentSource, NewsSource,
-ProcurementSource, EventSource) are modelled as the `SourceType` enum rather than
-as five near-identical classes, because they differ in trust tier and provenance,
-not in fetch mechanics. Adding a genuinely different mechanism (an HTML scraper, a
-tender portal API) means one new class and one registry entry; the pipeline does
-not change.
+`FetchClient` owns what is easy to get wrong per-adapter: timeouts, bounded
+retries (transient statuses only — a 403 is an answer, not a hiccup), per-**host**
+rate limiting, `Retry-After`, a response byte cap, and a real User-Agent. It
+returns a result rather than raising, so no adapter can abort a run.
 
-Government and procurement portals are deliberately **not** faked in V1. They are
-high-value and are listed in `ROADMAP.md`; each needs its access terms, rate
-limits and redistribution rights verified before it is wired in.
+The spec's source *categories* are the `SourceType` enum rather than five
+near-identical classes, because they differ in trust tier, not in fetch mechanics.
 
-## Deduplication
+## Analyst intake
 
-Every entity has an explicit dedupe strategy backed by a database constraint, not
-just application logic — see `DATA_MODEL.md`.
+`POST /api/v1/ingest/signals` takes a structured, verified signal plus its
+mandatory source. It is implemented as `StaticExtractionProvider` — a provider that
+returns the extraction it was handed — so it reuses the **entire** pipeline rather
+than a parallel path that would drift. It records `ANALYST` provenance and
+`extractor: "analyst"`, and it faces the same relevance gate and the same
+deduplication.
+
+## Recurring refresh
+
+`services/scheduler.py` runs one cycle on an interval in a daemon thread, off by
+default:
+
+1. ingest configured sources
+2. discover contacts, then re-score each affected company **once**
+3. apply decay
+
+Order matters: each stage feeds the next. Contact re-scoring happens after all of
+a page's contacts are attached, not per contact — otherwise one page produces
+several meaningless score movements in the daily brief.
+
+`python -m app.cli cycle` runs the same function, for anyone who prefers cron.
+
+## Access control
+
+A single shared API key (`X-API-Key` or a bearer token), applied as a dependency on
+the whole `/api/v1` router so a new route cannot be added unprotected by omission.
+Health probes stay open. No key configured means open access — fine locally, and
+**refused outright** when `APP_ENV` is not a development value, so it can never be
+the silent production default.
 
 ## Configuration
 
-All tunable behaviour lives in `backend/app/config.py`, loaded from environment
-variables with documented defaults: sectors, scoring weights, the qualifying
-threshold, `TOP_N`, conservatism exponent, decay constants, ingestion limits. No
-magic numbers in the scoring code.
+Everything tunable is in `backend/app/config.py`, loaded from the environment with
+documented defaults: sectors, scoring weights, the qualifying threshold, `TOP_N`,
+conservatism exponent, decay constants, relevance thresholds, rate limits,
+scheduler interval. Scoring weights are validated at startup to sum to 1.0; a bad
+vector fails fast rather than silently skewing every score.
 
 ## What is intentionally absent
 
 Outreach sending, CRM pipeline management, multi-country support, a queue, a
-warehouse, and per-source bespoke scrapers. Each would cost V1 focus and can be
-added behind the existing seams.
+warehouse, per-source bespoke scrapers, and any government or procurement adapter
+whose access terms have not been verified. Each would cost focus and can be added
+behind the existing seams.

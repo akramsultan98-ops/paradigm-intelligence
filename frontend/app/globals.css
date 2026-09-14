@@ -127,3 +127,75 @@ form.filters a.reset { font-size: 13px; padding: 8px 4px; }
 .pill.VERIFIED { border-color: var(--accent); color: var(--accent); }
 
 footer.note { margin-top: 28px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
+
+/* --- navigation ------------------------------------------------------- */
+header.masthead h1 a { color: var(--text); text-decoration: none; }
+.nav { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.nav a {
+  padding: 8px 14px; font-size: 13px; text-decoration: none; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.nav a.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.crumbs { font-size: 13px; margin: 0 0 14px; }
+
+/* --- shared bits ------------------------------------------------------ */
+.stat .value.small { font-size: 13px; }
+.sub.small { font-size: 11px; }
+form.filters label.grow { flex: 1 1 260px; }
+form.filters label.grow input { width: 100%; }
+.tag.strong { color: var(--text); border-color: var(--muted); }
+.title.big { font-size: 22px; }
+.title a { color: var(--text); text-decoration: none; }
+.title a:hover { color: var(--accent); }
+.v.action, .action { color: var(--accent); font-weight: 600; }
+.action.big { font-size: 18px; margin: 4px 0; }
+.detail-link { display: inline-block; margin-top: 10px; font-size: 12px; }
+.formula { color: var(--muted); font-size: 11px; margin: 6px 0 12px; line-height: 1.45; }
+
+/* --- detail / company / brief panels ---------------------------------- */
+.detail { display: block; }
+.detail-head {
+  display: flex; gap: 18px; align-items: flex-start; margin-bottom: 18px;
+  padding-bottom: 16px; border-bottom: 1px solid var(--border);
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px; margin-bottom: 12px;
+}
+.panel h3 {
+  margin: 0 0 12px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted);
+}
+.panel h3 .count {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 1px 8px; margin-left: 6px; font-size: 11px; color: var(--text);
+}
+.panel p { margin: 0 0 8px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } .detail-head { flex-direction: column; } }
+.action-panel { border-color: var(--accent); }
+
+/* --- the three statements --------------------------------------------- */
+/* Visually distinct so a prediction can never read as a fact. */
+.truth { display: flex; flex-direction: column; gap: 8px; }
+.truth-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: start; }
+@media (max-width: 640px) { .truth-row { grid-template-columns: 1fr; gap: 2px; } }
+.truth-key {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.07em; padding: 2px 7px;
+  border-radius: 4px; text-align: center; border: 1px solid;
+}
+.truth-key.fact { color: var(--fact); border-color: var(--fact); }
+.truth-key.inference { color: var(--inference); border-color: var(--inference); }
+.truth-key.prediction { color: var(--prediction); border-color: var(--border); }
+
+/* --- compact rows ----------------------------------------------------- */
+.mini-row {
+  display: grid; grid-template-columns: 74px 1fr; gap: 14px; align-items: start;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.mini-row:first-of-type { border-top: 0; }
+.contact-row { padding: 8px 0; border-top: 1px solid var(--border); }
+.contact-row:first-of-type { border-top: 0; }
+.delta { font-size: 11px; font-weight: 700; margin-left: 6px; }
+.delta.up { color: var(--qualified); }
+.delta.down { color: var(--hot); }

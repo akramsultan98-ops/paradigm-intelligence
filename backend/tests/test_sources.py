@@ -16,6 +16,7 @@ import pytest
 from app.domain.enums import SourceType
 from app.sources import build_adapter, load_source_configs, load_sources
 from app.sources.base import RawDocument, SourceConfig
+from app.sources.http import FetchClient
 from app.sources.jsonl import JsonlFileSourceAdapter
 from app.sources.rss import RssSourceAdapter, _strip_html
 
@@ -75,7 +76,12 @@ def _rss_adapter(body: str = FEED, status: int = 200) -> RssSourceAdapter:
         confidence=0.8,
         options={"feed_url": "https://example.test/feed"},
     )
-    return RssSourceAdapter(config, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    # The adapter takes a FetchClient (timeouts, retries, rate limiting); the
+    # mock transport goes into the httpx client it wraps.
+    fetch_client = FetchClient(
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    return RssSourceAdapter(config, client=fetch_client)
 
 
 def test_rss_adapter_parses_entries() -> None:

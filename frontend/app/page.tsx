@@ -1,65 +1,57 @@
 /**
- * The Top 50 view — the whole V1 interface.
+ * The Top 50 view.
  *
- * A server component: it fetches on the server, renders once, and ships no API
- * client to the browser. Filters are plain GET query parameters, so every view
- * is a shareable URL and there is no client-side state to keep in sync.
+ * A server component: fetches on the server, ships no API client to the browser.
+ * Filters, sorting and search are plain GET query parameters, so every view is a
+ * shareable URL and there is no client-side state to keep in sync.
  */
 
+import Link from "next/link";
 import {
   Filters,
   OPPORTUNITY_STATUSES,
   OPPORTUNITY_TYPES,
   Opportunity,
+  SORT_FIELDS,
   fetchSectors,
   fetchTop50,
   humanize,
 } from "@/lib/api";
+import {
+  AssertionTag,
+  ContactCard,
+  ErrorPanel,
+  Masthead,
+  Nav,
+  ScoreBadge,
+  ScorePanel,
+  SourceLine,
+} from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <span>
-        {value}
-        <div className="bar">
-          <i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
-        </div>
-      </span>
-    </div>
-  );
-}
-
 function Card({ opportunity }: { opportunity: Opportunity }) {
   const o = opportunity;
-  const source = o.signal.source;
-  const contact = o.primary_contact;
 
   return (
     <article className="card">
-      <div className="rankbox">
-        <div className="rank">#{o.rank}</div>
-        <div className="score">{o.score}</div>
-        <div className={`band ${o.classification}`}>{o.classification.replace("_", " ")}</div>
-      </div>
+      <ScoreBadge score={o.score} classification={o.classification} rank={o.rank} />
 
       <div>
-        <h2 className="title">{o.company.name}</h2>
+        <h2 className="title">
+          <Link href={`/opportunities/${o.id}`}>{o.company.name}</Link>
+        </h2>
         <p className="sub">
           {[o.company.sector, o.company.city].filter(Boolean).join(" · ") || "Sector unknown"}
         </p>
 
         <div className="tags">
-          <span className="tag">{humanize(o.type)}</span>
-          {/* The epistemic label. A prediction must never read as a booking. */}
-          <span className={`tag assert-${o.assertion_level}`} title="Fact, inference or prediction">
-            {o.assertion_level}
-          </span>
+          <span className="tag strong">{humanize(o.type)}</span>
+          <AssertionTag level={o.assertion_level} />
           <span className="tag">{humanize(o.status)}</span>
           <span className="tag">{o.opportunity_window.replace(/_/g, " ")}</span>
           <span className="tag">{humanize(o.recommended_contact_timing)}</span>
+          <span className="tag">{o.commercial_value_band.replace("_", " ")} value</span>
         </div>
 
         <div className="block">
@@ -80,8 +72,8 @@ function Card({ opportunity }: { opportunity: Opportunity }) {
         </div>
 
         <div className="block">
-          <div className="k">Recommended action</div>
-          <div className="v">{humanize(o.recommended_action)}</div>
+          <div className="k">Next action</div>
+          <div className="v action">{humanize(o.recommended_action)}</div>
         </div>
 
         {o.recommended_services.length > 0 && (
@@ -97,70 +89,23 @@ function Card({ opportunity }: { opportunity: Opportunity }) {
           </div>
         )}
 
-        {source && (
-          <div className="block">
-            <div className="k">Source</div>
-            <div className="v">
-              <a href={source.source_url} target="_blank" rel="noreferrer noopener">
-                {source.source_title ?? source.source_url}
-              </a>
-              <span className="sub">
-                {" "}
-                — {source.publisher ?? humanize(source.source_type)}
-                {source.publication_date
-                  ? ` · ${new Date(source.publication_date).toLocaleDateString()}`
-                  : " · date unknown"}
-              </span>
-            </div>
+        <div className="block">
+          <div className="k">Source</div>
+          <div className="v">
+            <SourceLine source={o.signal.source} />
           </div>
-        )}
+        </div>
       </div>
 
       <div className="side">
-        <div className="metrics">
-          <Metric label="Event prob." value={o.event_probability} />
-          <Metric label="Comm. value" value={o.commercial_value} />
-          <Metric label="Contact" value={o.contact_quality} />
-          <Metric label="Timing" value={o.timing_score} />
-          <Metric label="Evidence" value={o.evidence_score} />
-          <div className="metric">
-            <span>Decay</span>
-            <span>{o.decay_factor.toFixed(2)}×</span>
-          </div>
-        </div>
-
+        <ScorePanel o={o} />
         <div className="block">
-          <div className="k">Commercial value</div>
-          <div className="v">{o.commercial_value_band.replace("_", " ")}</div>
-        </div>
-
-        <div className="block contact">
           <div className="k">Contact</div>
-          {contact ? (
-            <>
-              <div className="name">{contact.name}</div>
-              <div className="role">
-                {contact.job_title ?? "Title unknown"} · {humanize(contact.department)}
-              </div>
-              {contact.email ? (
-                <div className="email">
-                  {contact.email} <span className={`pill ${contact.email_status}`}>{contact.email_status}</span>
-                </div>
-              ) : (
-                <div className="role">No public email on record</div>
-              )}
-              {contact.linkedin_url && (
-                <a href={contact.linkedin_url} target="_blank" rel="noreferrer noopener">
-                  LinkedIn
-                </a>
-              )}
-            </>
-          ) : (
-            <div className="role">
-              No contact identified yet — research the account before approaching.
-            </div>
-          )}
+          <ContactCard contact={o.primary_contact} />
         </div>
+        <Link className="detail-link" href={`/opportunities/${o.id}`}>
+          Full detail →
+        </Link>
       </div>
     </article>
   );
@@ -183,6 +128,9 @@ export default async function Page({
     status: pick("status"),
     type: pick("type"),
     date_from: pick("date_from"),
+    search: pick("search"),
+    sort: pick("sort"),
+    order: pick("order"),
   };
 
   let data;
@@ -197,22 +145,11 @@ export default async function Page({
 
   return (
     <div className="wrap">
-      <header className="masthead">
-        <h1>PARADIGM INTELLIGENCE</h1>
-        <p>
-          The corporate sales opportunities most likely to generate event business in Egypt,
-          ranked by opportunity score.
-        </p>
-      </header>
+      <Masthead subtitle="The corporate sales opportunities most likely to generate event business in Egypt, ranked by opportunity score." />
+      <Nav active="top50" />
 
       {error ? (
-        <div className="error">
-          <h2>Could not reach the API</h2>
-          <p>{error}</p>
-          <p>
-            Check that the backend is running and that <code>API_BASE_URL</code> points at it.
-          </p>
-        </div>
+        <ErrorPanel message={error} />
       ) : (
         data && (
           <>
@@ -235,7 +172,7 @@ export default async function Page({
               </div>
               <div className="stat">
                 <div className="label">Generated</div>
-                <div className="value" style={{ fontSize: 13 }}>
+                <div className="value small">
                   {new Date(data.generated_at).toLocaleString()}
                 </div>
               </div>
@@ -243,6 +180,16 @@ export default async function Page({
 
             {/* Plain GET form: every filtered view is a shareable URL. */}
             <form className="filters" method="get">
+              <label className="grow">
+                Search company or contact
+                <input
+                  type="search"
+                  name="search"
+                  placeholder="e.g. Elsewedy, or a contact name or email"
+                  defaultValue={filters.search ?? ""}
+                />
+              </label>
+
               <label>
                 Sector
                 <select name="sector" defaultValue={filters.sector ?? ""}>
@@ -292,8 +239,27 @@ export default async function Page({
               </label>
 
               <label>
-                Created since
+                Found since
                 <input type="date" name="date_from" defaultValue={filters.date_from ?? ""} />
+              </label>
+
+              <label>
+                Sort by
+                <select name="sort" defaultValue={filters.sort ?? "score"}>
+                  {SORT_FIELDS.map((field) => (
+                    <option key={field.value} value={field.value}>
+                      {field.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Direction
+                <select name="order" defaultValue={filters.order ?? "desc"}>
+                  <option value="desc">Highest first</option>
+                  <option value="asc">Lowest first</option>
+                </select>
               </label>
 
               <button type="submit">Apply</button>
@@ -308,7 +274,7 @@ export default async function Page({
                 <p>
                   Only opportunities scoring {data.qualifying_threshold} or above are eligible, and
                   the remaining slots are deliberately left empty rather than filled with weak
-                  leads. Run an ingestion pass, or relax the filters.
+                  leads. Run an ingestion cycle, or relax the filters.
                 </p>
               </div>
             ) : (
