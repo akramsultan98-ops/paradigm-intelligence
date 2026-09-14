@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "Source registry for PARADIGM INTELLIGENCE. Data, not code.",
+    "",
+    "Each entry: key (unique), adapter ('rss' or 'jsonl'), source_type (trust tier),",
+    "publisher, enabled, confidence (0-1, confidence in the SOURCE not the content),",
+    "company_hint (set when the feed belongs to one company), and adapter options.",
+    "",
+    "source_type values, highest trust first: COMPANY, GOVERNMENT, PROCUREMENT,",
+    "BUSINESS_PUBLICATION, INDUSTRY_PUBLICATION, EVENT, PUBLIC_PROFILE, OTHER.",
+    "",
+    "No live feeds are enabled by default. Before enabling one, confirm its terms of",
+    "use, rate limits and redistribution rights - this repository makes no claim",
+    "about sources that have not been checked. See docs/ROADMAP.md.",
+    "",
+    "The two examples below are disabled templates. Copy, edit, set enabled: true."
+  ],
+  "sources": [
+    {
+      "key": "example-company-newsroom",
+      "adapter": "rss",
+      "source_type": "COMPANY",
+      "publisher": "Example Corporation",
+      "company_hint": "Example Corporation",
+      "enabled": false,
+      "confidence": 0.9,
+      "options": {
+        "feed_url": "https://example.com/newsroom/rss"
+      }
+    },
+    {
+      "key": "example-business-press",
+      "adapter": "rss",
+      "source_type": "BUSINESS_PUBLICATION",
+      "publisher": "Example Business Daily",
+      "enabled": false,
+      "confidence": 0.75,
+      "options": {
+        "feed_url": "https://example.com/business/feed"
+      }
+    },
+    {
+      "key": "analyst-inbox",
+      "adapter": "jsonl",
+      "source_type": "OTHER",
+      "publisher": "Analyst supplied",
+      "enabled": false,
+      "confidence": 0.6,
+      "options": {
+        "path": "data/local/analyst-inbox.jsonl"
+      }
+    }
+  ]
+}

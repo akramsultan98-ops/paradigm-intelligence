@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-paradigm}
+      POSTGRES_USER: ${POSTGRES_USER:-paradigm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Loopback only: the database is never exposed off the host.
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-false}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-paradigm}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-paradigm}
+      AI_PROVIDER: ${AI_PROVIDER:-rule_based}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
+      TOP_N: ${TOP_N:-50}
+      MIN_QUALIFYING_SCORE: ${MIN_QUALIFYING_SCORE:-70}
+      SOURCES_CONFIG: /app/config/sources.json
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      # The source registry and analyst files are configuration: mounted
+      # read-only so adding a feed needs no rebuild.
+      - ./config:/app/config:ro
+      - ./data:/app/data:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # Server-side fetches go container-to-container, so the browser never
+      # needs to reach the API itself.
+      API_BASE_URL: http://api:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  postgres_data:

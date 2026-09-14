@@ -1,0 +1,196 @@
+"""Opportunity responses — the product's actual output surface."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+from app.domain.enums import (
+    AssertionLevel,
+    Classification,
+    CommercialValueBand,
+    ContactTiming,
+    Department,
+    EmailStatus,
+    OpportunityStatus,
+    OpportunityType,
+    OpportunityWindow,
+    SignalType,
+    SourceType,
+)
+from app.schemas.common import ORMModel
+
+
+class SourceRef(ORMModel):
+    """Provenance, attached to every important record (spec §17)."""
+
+    id: uuid.UUID
+    source_url: str = Field(validation_alias="url")
+    source_title: str | None = Field(default=None, validation_alias="title")
+    source_type: SourceType
+    publisher: str | None = None
+    publication_date: datetime | None = None
+    confidence: Decimal
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @field_serializer("confidence")
+    def _confidence(self, value: Decimal) -> float:
+        return float(value)
+
+
+class CompanyRef(ORMModel):
+    id: uuid.UUID
+    name: str
+    sector: str | None = None
+    city: str | None = None
+    domain: str | None = None
+    size_band: str
+    event_potential_score: int | None = None
+
+
+class ContactRef(ORMModel):
+    """A contact, always with its email provenance visible."""
+
+    id: uuid.UUID
+    name: str
+    job_title: str | None = None
+    department: Department
+    email: str | None = None
+    linkedin_url: str | None = None
+    #: Never ``VERIFIED`` unless an actual verification step set it.
+    email_status: EmailStatus
+    contact_score: int
+    confidence: Decimal
+
+    @field_serializer("confidence")
+    def _confidence(self, value: Decimal) -> float:
+        return float(value)
+
+
+class SignalRef(ORMModel):
+    id: uuid.UUID
+    type: SignalType
+    title: str
+    summary: str | None = None
+    business_impact: str | None = None
+    published_at: datetime | None = None
+    evidence_level: str
+    confidence: Decimal
+    source: SourceRef | None = None
+
+    @field_serializer("confidence")
+    def _confidence(self, value: Decimal) -> float:
+        return float(value)
+
+
+class ScoreBreakdown(BaseModel):
+    """The score, taken apart.
+
+    Returned so the ranking can be interrogated rather than taken on faith.
+    """
+
+    event_probability: int
+    commercial_value: int
+    commercial_value_band: CommercialValueBand
+    contact_quality: int
+    timing_score: int
+    evidence_score: int
+    base_score: int
+    decay_factor: float
+    score: int
+    classification: Classification
+
+
+class OpportunityOut(ORMModel):
+    """One opportunity, as the Top 50 view renders it (spec §29)."""
+
+    id: uuid.UUID
+    #: 1-based position in the current result set. Set by the API, not stored.
+    rank: int | None = None
+
+    score: int
+    classification: Classification
+    type: OpportunityType
+    #: ``FACT`` / ``INFERENCE`` / ``PREDICTION`` — a prediction is never presented
+    #: as a confirmed event (spec §6).
+    assertion_level: AssertionLevel
+    status: OpportunityStatus
+
+    event_probability: int
+    commercial_value: int
+    commercial_value_band: CommercialValueBand
+    contact_quality: int
+    timing_score: int
+    evidence_score: int
+    base_score: int
+    decay_factor: Decimal
+
+    why_now: str
+    sales_angle: str
+    recommended_action: str
+    recommended_services: list[str]
+
+    opportunity_window: OpportunityWindow
+    window_ends_on: date | None = None
+    recommended_contact_timing: ContactTiming
+
+    previous_score: int | None = None
+    previous_classification: Classification | None = None
+    score_changed_at: datetime | None = None
+    scored_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    company: CompanyRef
+    signal: SignalRef
+    primary_contact: ContactRef | None = None
+
+    @field_serializer("decay_factor")
+    def _decay(self, value: Decimal) -> float:
+        return float(value)
+
+    @property
+    def breakdown(self) -> ScoreBreakdown:
+        return ScoreBreakdown(
+            event_probability=self.event_probability,
+            commercial_value=self.commercial_value,
+            commercial_value_band=self.commercial_value_band,
+            contact_quality=self.contact_quality,
+            timing_score=self.timing_score,
+            evidence_score=self.evidence_score,
+            base_score=self.base_score,
+            decay_factor=float(self.decay_factor),
+            score=self.score,
+            classification=self.classification,
+        )
+
+
+class OpportunityDetail(OpportunityOut):
+    """Detail view: every contact at the company, not just the best one."""
+
+    contacts: list[ContactRef] = Field(default_factory=list)
+
+
+class Top50Response(BaseModel):
+    """The Top 50.
+
+    ``returned`` may be fewer than ``top_n``: if only 23 opportunities clear the
+    threshold, the list has 23 rows. Empty slots are never padded (spec §12).
+    """
+
+    generated_at: datetime
+    qualifying_threshold: int
+    top_n: int
+    returned: int
+    eligible_total: int
+    items: list[OpportunityOut]
+
+
+class OpportunityStatusUpdate(BaseModel):
+    """The only mutation the API allows on an opportunity."""
+
+    status: OpportunityStatus
