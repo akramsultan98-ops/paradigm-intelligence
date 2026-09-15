@@ -194,17 +194,52 @@ def company_state(session: Session, company_id: object) -> CompanyOutreachState:
     )
 
 
-def due_follow_ups(session: Session, *, on: date | None = None) -> list[Contact]:
-    """Contacts whose follow-up date has arrived or passed.
+@dataclass(frozen=True, slots=True)
+class DueFollowUp:
+    """One thing owed a next step."""
 
-    The Account Manager's working list: who is owed a call today.
+    company: Company
+    due_on: date
+    #: ``None`` for a follow-up promised on the account rather than to a person —
+    #: which is the normal case early on, before anybody is named.
+    contact: Contact | None
+
+
+def due_follow_ups(session: Session, *, on: date | None = None) -> list[DueFollowUp]:
+    """Everything whose follow-up date has arrived or passed, oldest first.
+
+    Two kinds, and both have to appear. A follow-up promised to a named person is
+    held on the contact. A follow-up promised on the account — "come back after the
+    show" — has no contact to hold it, so it is read from the account's own most
+    recent unattached log entry. Only showing the first kind would silently drop
+    exactly the accounts being worked without a named contact yet.
     """
     on = on or datetime.now(UTC).date()
-    return list(
-        session.scalars(
+
+    due = [
+        DueFollowUp(company=contact.company, due_on=contact.next_follow_up_on, contact=contact)
+        for contact in session.scalars(
             select(Contact)
             .options(joinedload(Contact.company))
             .where(Contact.next_follow_up_on.is_not(None), Contact.next_follow_up_on <= on)
-            .order_by(Contact.next_follow_up_on)
         ).unique().all()
+        if contact.next_follow_up_on is not None
+    ]
+
+    # The latest account-level promise per company: the most recent unattached entry
+    # that set a date is the one that still stands.
+    latest: dict[object, OutreachLog] = {}
+    for entry in session.scalars(
+        select(OutreachLog)
+        .options(joinedload(OutreachLog.company))
+        .where(OutreachLog.contact_id.is_(None), OutreachLog.next_follow_up_on.is_not(None))
+        .order_by(OutreachLog.occurred_at)
+    ).unique().all():
+        latest[entry.company_id] = entry
+    due.extend(
+        DueFollowUp(company=entry.company, due_on=entry.next_follow_up_on, contact=None)
+        for entry in latest.values()
+        if entry.next_follow_up_on is not None and entry.next_follow_up_on <= on
     )
+
+    return sorted(due, key=lambda item: (item.due_on, item.company.name))

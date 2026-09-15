@@ -23,6 +23,14 @@ An Account Manager opens it and sees, for each opportunity: who to contact, why
 now, what happened, what event could result, what PARADIGM could sell, when to
 approach, and how strong it is.
 
+It also answers the question that decides what to actually say: **can this still be
+won?** An event two weeks away is usually already contracted, and a past event is not
+an opportunity at all. Every opportunity is classed `IMMEDIATE` (bid for it),
+`FUTURE_ACCOUNT` (build the relationship for the next one) or `HISTORICAL` (account
+research only) — and a past event never appears in the ranking as if it were still
+upcoming. Each company profile then names the department to approach *for that kind
+of event*, every public route on record, and what was last said to them.
+
 It is **not** a CRM, **not** a scraper, and **not** a contact database.
 
 ## Principles
@@ -41,7 +49,10 @@ It is **not** a CRM, **not** a scraper, and **not** a contact database.
 - **Real and test data never mix.** Every source carries `AUTOMATED`, `ANALYST` or
   `TEST` provenance, and the API excludes `TEST` by default.
 - **Public information only.** Contacts are professional business contacts from
-  public pages, each with a `source_url` and an explicit `email_status`.
+  public pages, each with a `source_url` and an explicit `email_status`. A person and
+  an official department inbox are stored as different things (`contact_kind`) and can
+  never read as each other. Contact-data brokers are not a source of provenance, and
+  no address is ever derived from a name pattern.
 
 ## Quick start
 
@@ -139,8 +150,11 @@ Recurring refresh is either a cron entry calling `cycle`:
 | `GET` | `/api/v1/opportunities` | all opportunities, paginated |
 | `GET` | `/api/v1/opportunities/{id}` | full detail with company, signal, source, all contacts |
 | `PATCH` | `/api/v1/opportunities/{id}` | update status (the only mutable field) |
-| `GET` | `/api/v1/companies` · `/{id}` | company list and profile |
+| `GET` | `/api/v1/companies` · `/{id}` | company list and contact-first profile |
 | `GET` | `/api/v1/companies/sectors` | configured sectors |
+| `GET` | `/api/v1/companies/{id}/outreach` | outreach history for a company |
+| `POST` | `/api/v1/companies/{id}/outreach` | log an interaction |
+| `GET` | `/api/v1/outreach/follow-ups` | who is owed a next step (`as_of` looks ahead) |
 | `GET` | `/api/v1/brief/daily` | new / upgraded / downgraded / expired / current Top 50 |
 | `POST` | `/api/v1/ingest/run` | run configured source adapters |
 | `POST` | `/api/v1/ingest/documents` | submit raw documents |
@@ -153,7 +167,10 @@ Recurring refresh is either a cron entry calling `cycle`:
 
 Query parameters on the opportunity endpoints: `sector`, `min_score`, `max_score`,
 `status`, `type`, `classification`, `date_from`, `date_to`, `search`, `sort`,
-`order`, `include_test`.
+`order`, `include_test`, `timing`, `include_historical`.
+
+`timing` takes `IMMEDIATE`, `FUTURE_ACCOUNT` or `HISTORICAL`. Past events are
+excluded from the ranking by default — see `docs/SCORING.md` §5a.
 
 ## Access control
 
@@ -180,23 +197,35 @@ terms permit automated access, then set `enabled: true`.
 
 ## Current real data
 
-The database this repository was developed against holds **19 real, source-backed
-opportunities across 17 Egyptian companies**, in Telecommunications, Industrial,
-Real Estate, Engineering, Manufacturing, Energy, Oil & Gas, Pharma, Banking and
-Fintech. Three qualify for the Top 50.
+`data/real/` holds **18 real, source-backed signals** covering 17 Egyptian companies
+in Telecommunications, Industrial, Real Estate, Engineering, Manufacturing, Energy,
+Oil & Gas, Pharma, Banking and Fintech. Load them with:
 
-Every one carries a real public `source_url`, a real publication date where the
+```bash
+make load-real-data     # or: python scripts/load_real_data.py --base-url ...
+```
+
+That produces 18 opportunities, of which three qualify for the Top 50. The script is
+idempotent and the dataset is the repository's, so the state is reproducible rather
+than something that happened once in a container.
+
+Every entry carries a real public `source_url`, a real publication date where the
 source gave one, and `ANALYST` provenance — they were entered through
 `POST /api/v1/ingest/signals` with their citations, because automated ingestion is
-blocked by the egress policy described above. They are **not** labelled as
-automated extraction, and the UI shows the provenance on every row.
+blocked by the egress policy described above. They are **not** labelled as automated
+extraction, and the UI shows the provenance on every row.
 
-Contacts: **four real department contact routes**, each evidenced by an official
-page on the company's own website, all with `email_status: UNKNOWN` because no
-address could be obtained. No named individuals and no email addresses — see
-`docs/ROADMAP.md` for exactly why, and what unblocks it.
+Event dates are present only where the source publishes one (three of the eighteen:
+Egypt Energy 12–14 Oct, Mediterranean Offshore Conference 20–22 Oct, Cityscape Egypt
+30 Sep – 3 Oct). Nothing infers a date, so the timing classes on the rest are derived
+from the reported window and say so.
 
-The raw submitted data and its citations are in `data/real/`.
+Contacts: **four real department contact routes**, each evidenced by an official page
+on the company's own website, all `contact_kind: DEPARTMENT_ROUTE` and all with
+`email_status: UNKNOWN` because no address could be obtained from this environment.
+No named individuals and no email addresses — see `docs/ROADMAP.md` for exactly why,
+and what unblocks it. The profile displays that as UNKNOWN rather than filling the
+space.
 
 ## AI provider
 
@@ -215,8 +244,8 @@ rule_based` on everything it produces. Do not rank production opportunities on i
 ## Tests
 
 ```bash
-make test-unit    # 298 tests, no database required
-make test         # 435 tests, adds integration tests against real PostgreSQL
+make test-unit    # 384 tests, no database required
+make test         # 562 tests, adds integration tests against real PostgreSQL
 make lint
 ```
 
@@ -230,24 +259,27 @@ backend/
   app/
     api/        HTTP routes + access control
     domain/     enums and controlled vocabularies
-    models/     SQLAlchemy tables (five)
+    models/     SQLAlchemy tables (six)
     schemas/    Pydantic request/response models
-    services/   pipeline, relevance, normalize, dedupe, brief, rescore, scheduler
+    services/   pipeline, relevance, normalize, dedupe, brief, rescore,
+                scheduler, outreach, company_profile
     sources/    adapter framework, FetchClient, RSS / JSONL / contact pages
     ai/         extraction provider abstraction
-    scoring/    the deterministic score engine
+    scoring/    the deterministic score engine, event timing, contact routing
   alembic/      migrations
   tests/
-frontend/       Next.js: Top 50, opportunity detail, company profile, daily brief
+frontend/       Next.js: Top 50, opportunity detail, company profile, brief,
+                follow-ups
 config/         source registry
-data/real/      real analyst-submitted signals, with their citations
+data/real/      real analyst-submitted signals and contact routes, with citations
+scripts/        load_real_data.py — loads data/real through the analyst intake API
 docs/           ARCHITECTURE · DATA_MODEL · SCORING · ROADMAP
 ```
 
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — shape, pipeline, AI/code split, provenance
-- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — the five tables, constraints, normalization, migrations
+- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — the six tables, constraints, normalization, migrations
 - [`docs/SCORING.md`](docs/SCORING.md) — every weight and constant, when scores recompute, how to tune
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is implemented, the known gaps and why, what comes next
 

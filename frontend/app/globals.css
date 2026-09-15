@@ -223,3 +223,130 @@ form.filters label.grow input { width: 100%; }
   align-items: center; font-size: 11px; color: var(--muted); margin-bottom: 5px;
 }
 .legend p { margin: 8px 0 0; }
+
+/* --- event timing: what can still be done about it -------------------- */
+/* Three colours with three meanings, and "past event" is deliberately drab:
+   nothing about a historical opportunity should catch the eye as live work. */
+:root {
+  --immediate: #4f9cf9;
+  --future-account: #ffa94d;
+  --historical: #6b7280;
+}
+.tag.timing-IMMEDIATE {
+  border-color: var(--immediate); color: var(--immediate);
+  background: rgba(79, 156, 249, 0.12); font-weight: 700;
+}
+.tag.timing-FUTURE_ACCOUNT {
+  border-color: var(--future-account); color: var(--future-account);
+  background: rgba(255, 169, 77, 0.12); font-weight: 700;
+}
+.tag.timing-HISTORICAL {
+  border-color: var(--historical); color: var(--historical);
+  background: transparent; border-style: dashed;
+}
+.timing-why { font-style: italic; }
+
+/* --- contact kind: a person is not an inbox --------------------------- */
+.pill.kind-NAMED_INDIVIDUAL {
+  border-color: var(--qualified); color: var(--qualified);
+  background: rgba(81, 207, 102, 0.10);
+}
+.pill.kind-DEPARTMENT_ROUTE {
+  border-color: var(--accent); color: var(--accent);
+  background: rgba(79, 156, 249, 0.10);
+}
+.pill.kind-UNKNOWN {
+  border-color: var(--muted); color: var(--muted); border-style: dashed;
+}
+
+/* --- contact routes: every channel listed, absent ones marked UNKNOWN -- */
+.contact .routes { margin: 6px 0; display: flex; flex-direction: column; gap: 2px; }
+.contact .route { font-size: 12px; word-break: break-all; }
+.contact .route .k {
+  display: inline-block; min-width: 62px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted);
+}
+.contact .muted { color: var(--muted); }
+.contact .name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* --- ranked contacts -------------------------------------------------- */
+.ranked {
+  display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: start;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.ranked:first-of-type { border-top: 0; }
+.ranked .rankno { font-size: 16px; font-weight: 700; color: var(--muted); text-align: right; }
+.ranked.fit .rankno { color: var(--accent); }
+.why-dept { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
+.ranked.nofit .why-dept { color: var(--very-high); }
+
+/* --- departments we need and whether we have them --------------------- */
+.departments { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.dept-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.dept-list li { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel-2); font-size: 12px; }
+.dept-list li.have { border-left: 3px solid var(--qualified); }
+.dept-list li.lack { border-left: 3px solid var(--very-high); }
+.dept-list .pill { margin-left: 4px; }
+.dept-list li.have .pill { border-color: var(--qualified); color: var(--qualified); }
+.dept-list li.lack .pill { border-color: var(--very-high); color: var(--very-high); }
+
+/* --- outreach status: the relationship, not the score ----------------- */
+.pill[class*="status-"] { border-color: var(--muted); color: var(--muted); }
+.pill.status-NOT_CONTACTED { border-style: dashed; }
+.pill.status-CONTACTED, .pill.status-ATTEMPTED { border-color: var(--accent); color: var(--accent); }
+.pill.status-IN_DISCUSSION, .pill.status-MEETING_BOOKED,
+.pill.status-PROPOSAL_SENT { border-color: var(--high); color: var(--high); }
+.pill.status-WON { border-color: var(--qualified); color: var(--qualified); }
+.pill.status-LOST { border-color: var(--hot); color: var(--hot); }
+.pill.status-NURTURE { border-color: var(--very-high); color: var(--very-high); }
+
+.relationship { margin-left: auto; text-align: right; min-width: 210px; }
+.relationship .label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); margin-bottom: 4px;
+}
+.relationship .sub { margin: 4px 0 0; }
+.overdue { color: var(--hot); font-weight: 600; }
+
+/* --- the one thing to do next ---------------------------------------- */
+.first-action { border-color: var(--accent); }
+.lead { font-size: 15px; line-height: 1.5; }
+.desc { font-size: 13px; color: var(--muted); max-width: 70ch; }
+.unknown-box {
+  padding: 12px 14px; border: 1px dashed var(--muted); border-radius: 8px;
+  background: var(--panel-2);
+}
+.unknown-box .lead { color: var(--muted); margin-bottom: 6px; }
+
+/* --- outreach history ------------------------------------------------- */
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline li { padding: 10px 0 10px 12px; border-top: 1px solid var(--border);
+  border-left: 2px solid var(--border); margin-left: 4px; }
+.timeline li:first-child { border-top: 0; border-left-color: var(--accent); }
+.timeline .note { font-size: 12px; margin: 6px 0 0; white-space: pre-wrap; }
+
+/* --- logging an interaction ------------------------------------------- */
+.outreach-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.outreach-form .field { display: flex; flex-direction: column; gap: 3px; }
+.outreach-form .field.wide { grid-column: 1 / -1; }
+.outreach-form label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted);
+}
+.outreach-form input, .outreach-form select, .outreach-form textarea {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; width: 100%;
+}
+.outreach-form textarea { resize: vertical; }
+.outreach-form button {
+  grid-column: 1 / -1; justify-self: start; background: var(--accent); color: #06101f;
+  border: 0; border-radius: 6px; padding: 8px 16px; font: inherit; font-weight: 600;
+  cursor: pointer;
+}
+@media (max-width: 640px) { .outreach-form { grid-template-columns: 1fr; } }
+
+/* --- the follow-up list ----------------------------------------------- */
+.duebox { text-align: center; }
+.duebox .score { font-size: 26px; font-weight: 700; line-height: 1.1; color: var(--hot); }
+.duebox .band { font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); }

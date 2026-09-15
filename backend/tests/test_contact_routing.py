@@ -15,10 +15,12 @@ import pytest
 from app.domain.enums import ContactKind, Department, OpportunityType
 from app.scoring.contact_routing import (
     DEFAULT_PREFERENCE,
+    DEPARTMENT_LABEL,
     DEPARTMENT_RATIONALE,
     ROUTE_PREFERENCES,
     best_route,
     department_fit,
+    department_label,
     preferences_for,
     rank_contacts,
 )
@@ -161,3 +163,17 @@ def test_every_mapped_type_has_explained_departments(
         assert DEPARTMENT_RATIONALE.get(department), (opportunity_type, department)
         # Placeholders are not routes.
         assert department not in {Department.OTHER, Department.UNKNOWN}
+
+
+# --- wording -------------------------------------------------------------
+
+
+def test_acronym_departments_are_not_title_cased_into_typos() -> None:
+    """Title-casing the enum gives "Pr" and "Hr", which read as mistakes."""
+    assert department_label(Department.PR) == "PR"
+    assert department_label(Department.HR) == "HR"
+
+
+def test_every_department_has_a_readable_label() -> None:
+    for department in Department:
+        assert DEPARTMENT_LABEL.get(department), department

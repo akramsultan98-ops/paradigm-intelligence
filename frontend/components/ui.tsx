@@ -7,9 +7,18 @@
  */
 
 import Link from "next/link";
-import { ContactRef, Opportunity, SourceRef, humanize } from "@/lib/api";
+import {
+  ContactRef,
+  Opportunity,
+  OutreachLogEntry,
+  RankedContact,
+  SourceRef,
+  departmentLabel,
+  formatDate,
+  humanize,
+} from "@/lib/api";
 
-export function Nav({ active }: { active: "top50" | "brief" }) {
+export function Nav({ active }: { active: "top50" | "brief" | "follow-ups" }) {
   return (
     <nav className="nav">
       <Link href="/" className={active === "top50" ? "on" : ""}>
@@ -17,6 +26,9 @@ export function Nav({ active }: { active: "top50" | "brief" }) {
       </Link>
       <Link href="/brief" className={active === "brief" ? "on" : ""}>
         Daily brief
+      </Link>
+      <Link href="/follow-ups" className={active === "follow-ups" ? "on" : ""}>
+        Follow-ups
       </Link>
     </nav>
   );
@@ -63,6 +75,59 @@ export function AssertionTag({ level }: { level: string }) {
     <span className={`tag assert-${level}`} title={title}>
       {level}
     </span>
+  );
+}
+
+/**
+ * What can still be done about this event.
+ *
+ * The distinction an Account Manager acts on, and the reason the badge exists: an
+ * event two weeks out is usually already contracted, and a past event is not an
+ * opportunity at all. Neither may look like "upcoming".
+ */
+const TIMING_LABEL: Record<string, string> = {
+  IMMEDIATE: "BID NOW",
+  FUTURE_ACCOUNT: "BUILD ACCOUNT",
+  HISTORICAL: "PAST EVENT",
+};
+
+const TIMING_MEANING: Record<string, string> = {
+  IMMEDIATE: "Far enough out that procurement is plausibly still open.",
+  FUTURE_ACCOUNT:
+    "Upcoming but too close to win, or undated. Production is very likely already contracted — worth the relationship.",
+  HISTORICAL: "Already happened. Account research only, never a live opportunity.",
+};
+
+export function TimingBadge({
+  timing,
+  eventDate,
+}: {
+  timing: string;
+  eventDate?: string | null;
+}) {
+  return (
+    <span className={`tag timing-${timing}`} title={TIMING_MEANING[timing] ?? timing}>
+      {TIMING_LABEL[timing] ?? timing.replace(/_/g, " ")}
+      {eventDate ? ` · ${formatDate(eventDate)}` : ""}
+    </span>
+  );
+}
+
+export function TimingLegend() {
+  return (
+    <div className="legend">
+      <div className="legend-title">Event timing</div>
+      {(["IMMEDIATE", "FUTURE_ACCOUNT", "HISTORICAL"] as const).map((timing) => (
+        <div className="legend-row" key={timing}>
+          <TimingBadge timing={timing} />
+          <span>{TIMING_MEANING[timing]}</span>
+        </div>
+      ))}
+      <p className="sub small">
+        A date is only ever read from a source. Where none was published the timing is
+        inferred from the reported window and says so.
+      </p>
+    </div>
   );
 }
 
@@ -142,6 +207,48 @@ export function EmailStatusLegend() {
   );
 }
 
+/**
+ * Whether this is a person or an official route.
+ *
+ * Read from the stored ``contact_kind`` rather than guessed from the name, so a
+ * departmental inbox can never be mistaken for somebody we can ask for by name.
+ */
+const CONTACT_KIND_LABEL: Record<string, string> = {
+  NAMED_INDIVIDUAL: "NAMED PERSON",
+  DEPARTMENT_ROUTE: "DEPARTMENT ROUTE",
+  UNKNOWN: "UNCLASSIFIED",
+};
+
+const CONTACT_KIND_MEANING: Record<string, string> = {
+  NAMED_INDIVIDUAL: "A named individual published by the company itself.",
+  DEPARTMENT_ROUTE:
+    "An official department address or line — not a person. Ask for the events owner.",
+  UNKNOWN: "Not yet classified as a person or a department route.",
+};
+
+export function ContactKindBadge({ kind }: { kind: string }) {
+  return (
+    <span className={`pill kind-${kind}`} title={CONTACT_KIND_MEANING[kind] ?? kind}>
+      {CONTACT_KIND_LABEL[kind] ?? kind}
+    </span>
+  );
+}
+
+export function OutreachStatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`pill status-${status}`}>{status.replace(/_/g, " ")}</span>
+  );
+}
+
+/**
+ * One contact, in full.
+ *
+ * Everything an Account Manager has to decide whether to use it: what kind of
+ * contact it is, every public route we hold, how the email is known, where it was
+ * read from, when it was last confirmed, and where the relationship stands.
+ * Absent facts are printed as UNKNOWN rather than left blank — a blank reads as
+ * "fine".
+ */
 export function ContactCard({ contact }: { contact: ContactRef | null }) {
   if (!contact) {
     return (
@@ -158,25 +265,119 @@ export function ContactCard({ contact }: { contact: ContactRef | null }) {
   }
   return (
     <div className="contact">
-      <div className="name">{contact.name}</div>
+      <div className="name">
+        {contact.name} <ContactKindBadge kind={contact.contact_kind} />
+      </div>
       <div className="role">
-        {contact.job_title ?? "Title unknown"} · {humanize(contact.department)} · quality{" "}
-        {contact.contact_score}
+        {contact.job_title ?? "Title unknown"} · {departmentLabel(contact.department)} ·
+        quality {contact.contact_score}
       </div>
-      <div className="email">
-        {contact.email ? (
-          <a href={`mailto:${contact.email}`}>{contact.email}</a>
-        ) : (
-          <span className="muted">No address on record</span>
-        )}{" "}
-        <EmailStatusBadge status={contact.email_status} />
+      <div className="routes">
+        <div className="route">
+          <span className="k">Email</span>
+          {contact.email ? (
+            <a href={`mailto:${contact.email}`}>{contact.email}</a>
+          ) : (
+            <span className="muted">No address published</span>
+          )}{" "}
+          <EmailStatusBadge status={contact.email_status} />
+        </div>
+        <div className="route">
+          <span className="k">Phone</span>
+          {contact.phone ? (
+            <a href={`tel:${contact.phone.replace(/[^+\d]/g, "")}`}>{contact.phone}</a>
+          ) : (
+            <span className="muted">No number published</span>
+          )}
+        </div>
+        <div className="route">
+          <span className="k">LinkedIn</span>
+          {contact.linkedin_url ? (
+            <a href={contact.linkedin_url} target="_blank" rel="noreferrer noopener">
+              Profile
+            </a>
+          ) : (
+            <span className="muted">No profile on record</span>
+          )}
+        </div>
       </div>
-      {contact.linkedin_url && (
-        <a href={contact.linkedin_url} target="_blank" rel="noreferrer noopener">
-          LinkedIn
-        </a>
-      )}
+      <div className="sub small">
+        <span className="k">Source</span> <SourceLine source={contact.source} />
+      </div>
+      <div className="sub small">
+        <span className="k">Last verified</span>{" "}
+        {contact.last_verified_at ? formatDate(contact.last_verified_at) : "UNKNOWN"}
+        {" · "}
+        <OutreachStatusBadge status={contact.outreach_status} />
+        {contact.last_contacted_at
+          ? ` · last contacted ${formatDate(contact.last_contacted_at)}`
+          : " · never contacted"}
+        {contact.next_follow_up_on
+          ? ` · follow up ${formatDate(contact.next_follow_up_on)}`
+          : ""}
+      </div>
     </div>
+  );
+}
+
+/** A contact, positioned for one specific event. Carries why this department. */
+export function RankedContactRow({ ranked }: { ranked: RankedContact }) {
+  return (
+    <div className={`ranked ${ranked.is_preferred_department ? "fit" : "nofit"}`}>
+      <div className="rankno">#{ranked.rank}</div>
+      <div className="rankbody">
+        <ContactCard contact={ranked.contact} />
+        <p className="why-dept">
+          <strong>{ranked.is_preferred_department ? "Right route" : "Fallback route"}:</strong>{" "}
+          {ranked.reason}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const ACTION_LABEL: Record<string, string> = {
+  EMAIL_SENT: "Email sent",
+  CALL_MADE: "Call made",
+  CALL_ATTEMPTED: "Call attempted",
+  LINKEDIN_MESSAGE: "LinkedIn message",
+  MEETING_HELD: "Meeting held",
+  PROPOSAL_SENT: "Proposal sent",
+  INTRODUCTION_REQUESTED: "Introduction requested",
+  NOTE: "Note",
+};
+
+/** What was actually done, newest first. */
+export function OutreachTimeline({ entries }: { entries: OutreachLogEntry[] }) {
+  if (entries.length === 0) {
+    return (
+      <p className="sub">
+        Nothing logged yet. The first interaction recorded here becomes the account
+        history.
+      </p>
+    );
+  }
+  return (
+    <ol className="timeline">
+      {entries.map((entry) => (
+        <li key={entry.id}>
+          <div className="v">
+            {ACTION_LABEL[entry.action] ?? humanize(entry.action)}
+            {entry.contact_name ? ` · ${entry.contact_name}` : ""}{" "}
+            <OutreachStatusBadge status={entry.status_after} />
+          </div>
+          <div className="sub small">
+            {formatDate(entry.occurred_at)}
+            {entry.opportunity_type ? ` · ${humanize(entry.opportunity_type)}` : ""}
+            {entry.logged_by ? ` · ${entry.logged_by}` : ""}
+            {entry.next_follow_up_on
+              ? ` · next follow-up ${formatDate(entry.next_follow_up_on)}`
+              : ""}
+          </div>
+          {entry.note && <p className="note">{entry.note}</p>}
+        </li>
+      ))}
+    </ol>
   );
 }
 

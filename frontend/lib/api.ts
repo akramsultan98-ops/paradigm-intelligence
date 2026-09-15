@@ -20,6 +20,37 @@ export type Classification =
 
 export type EmailStatus = "VERIFIED" | "PUBLIC" | "INFERRED" | "UNKNOWN";
 
+/** A person, an official department route, or neither. Never conflated. */
+export type ContactKind = "NAMED_INDIVIDUAL" | "DEPARTMENT_ROUTE" | "UNKNOWN";
+
+/**
+ * Commercial timing. IMMEDIATE is still biddable; FUTURE_ACCOUNT is upcoming but
+ * almost certainly contracted, so it is a relationship rather than a job;
+ * HISTORICAL already happened and is research only.
+ */
+export type OpportunityTiming = "IMMEDIATE" | "FUTURE_ACCOUNT" | "HISTORICAL";
+
+export type OutreachStatus =
+  | "NOT_CONTACTED"
+  | "ATTEMPTED"
+  | "CONTACTED"
+  | "IN_DISCUSSION"
+  | "MEETING_BOOKED"
+  | "PROPOSAL_SENT"
+  | "WON"
+  | "LOST"
+  | "NURTURE";
+
+export type OutreachAction =
+  | "EMAIL_SENT"
+  | "CALL_MADE"
+  | "CALL_ATTEMPTED"
+  | "LINKEDIN_MESSAGE"
+  | "MEETING_HELD"
+  | "PROPOSAL_SENT"
+  | "INTRODUCTION_REQUESTED"
+  | "NOTE";
+
 export interface SourceRef {
   id: string;
   source_url: string;
@@ -36,11 +67,77 @@ export interface ContactRef {
   name: string;
   job_title: string | null;
   department: string;
+  contact_kind: ContactKind;
   email: string | null;
   linkedin_url: string | null;
+  phone: string | null;
   email_status: EmailStatus;
   contact_score: number;
   confidence: number;
+  last_verified_at: string | null;
+  outreach_status: OutreachStatus;
+  last_contacted_at: string | null;
+  next_follow_up_on: string | null;
+  source: SourceRef | null;
+}
+
+export interface RankedContact {
+  contact: ContactRef;
+  rank: number;
+  department_fit: number;
+  is_preferred_department: boolean;
+  reason: string;
+}
+
+export interface DepartmentSuggestion {
+  department: string;
+  why: string;
+  have_contact: boolean;
+}
+
+export interface ContactIntelligence {
+  total: number;
+  named_individuals: number;
+  department_routes: number;
+  unknown_kind: number;
+  with_email: number;
+  with_phone: number;
+  with_linkedin: number;
+  with_published_email: number;
+  has_any_route: boolean;
+  last_verified_at: string | null;
+  missing_departments: string[];
+}
+
+export interface OutreachLogEntry {
+  id: string;
+  action: OutreachAction;
+  status_after: OutreachStatus;
+  occurred_at: string;
+  next_follow_up_on: string | null;
+  note: string | null;
+  logged_by: string | null;
+  contact_id: string | null;
+  opportunity_id: string | null;
+  contact_name: string | null;
+  opportunity_type: string | null;
+}
+
+export interface OutreachState {
+  status: OutreachStatus;
+  last_contacted_at: string | null;
+  next_follow_up_on: string | null;
+  interactions: number;
+  overdue: boolean;
+}
+
+export interface FollowUpDue {
+  company_id: string;
+  company_name: string;
+  next_follow_up_on: string;
+  days_overdue: number;
+  /** Null when the follow-up was promised on the account, not to a named person. */
+  contact: ContactRef | null;
 }
 
 export interface SignalRef {
@@ -81,6 +178,9 @@ export interface Opportunity {
   opportunity_window: string;
   window_ends_on: string | null;
   recommended_contact_timing: string;
+  event_date: string | null;
+  timing_class: OpportunityTiming;
+  timing_rationale: string | null;
   previous_score: number | null;
   score_changed_at: string | null;
   scored_at: string;
@@ -140,6 +240,16 @@ export interface CompanyDetail {
   qualified_opportunity_count: number;
   account_score: number | null;
   event_history: SignalRef[];
+  contact_intelligence: ContactIntelligence;
+  recommended_contacts: RankedContact[];
+  relevant_departments: DepartmentSuggestion[];
+  routing_opportunity_id: string | null;
+  immediate_opportunity_count: number;
+  future_account_opportunity_count: number;
+  historical_opportunity_count: number;
+  outreach: OutreachState | null;
+  outreach_history: OutreachLogEntry[];
+  recommended_first_action: string | null;
 }
 
 export interface ChangedOpportunity {
@@ -171,6 +281,10 @@ export interface Filters {
   status?: string;
   type?: string;
   date_from?: string;
+  /** IMMEDIATE / FUTURE_ACCOUNT / HISTORICAL. */
+  timing?: string;
+  /** "true" to bring past events back into the list. */
+  include_historical?: string;
   search?: string;
   sort?: string;
   order?: string;
@@ -213,6 +327,44 @@ export function fetchCompany(id: string): Promise<CompanyDetail> {
 
 export function fetchBrief(): Promise<DailyBrief> {
   return get<DailyBrief>("/api/v1/brief/daily");
+}
+
+export function fetchFollowUps(asOf?: string): Promise<FollowUpDue[]> {
+  return get<FollowUpDue[]>(`/api/v1/outreach/follow-ups${buildQuery({ as_of: asOf })}`);
+}
+
+export interface OutreachDraft {
+  action: OutreachAction;
+  contact_id?: string;
+  opportunity_id?: string;
+  status_after?: OutreachStatus;
+  next_follow_up_on?: string;
+  note?: string;
+  logged_by?: string;
+}
+
+/**
+ * Record an interaction. Runs on the server like every other call, so the API key
+ * never leaves it.
+ */
+export async function logOutreach(
+  companyId: string,
+  draft: OutreachDraft,
+): Promise<OutreachLogEntry> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/companies/${companyId}/outreach`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+    },
+    body: JSON.stringify(draft),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Could not log the interaction (${response.status}): ${detail}`);
+  }
+  return response.json() as Promise<OutreachLogEntry>;
 }
 
 export async function fetchSectors(): Promise<string[]> {
@@ -265,6 +417,35 @@ export const OPPORTUNITY_TYPES = [
   "HOSPITALITY",
 ] as const;
 
+export const OUTREACH_ACTIONS = [
+  { value: "EMAIL_SENT", label: "Email sent" },
+  { value: "CALL_MADE", label: "Call made" },
+  { value: "CALL_ATTEMPTED", label: "Call attempted (no answer)" },
+  { value: "LINKEDIN_MESSAGE", label: "LinkedIn message" },
+  { value: "MEETING_HELD", label: "Meeting held" },
+  { value: "PROPOSAL_SENT", label: "Proposal sent" },
+  { value: "INTRODUCTION_REQUESTED", label: "Introduction requested" },
+  { value: "NOTE", label: "Note only" },
+] as const;
+
+export const OUTREACH_STATUSES = [
+  "NOT_CONTACTED",
+  "ATTEMPTED",
+  "CONTACTED",
+  "IN_DISCUSSION",
+  "MEETING_BOOKED",
+  "PROPOSAL_SENT",
+  "WON",
+  "LOST",
+  "NURTURE",
+] as const;
+
+export const TIMING_CLASSES = [
+  { value: "IMMEDIATE", label: "Immediate — still biddable" },
+  { value: "FUTURE_ACCOUNT", label: "Future account — likely contracted" },
+  { value: "HISTORICAL", label: "Historical — past event, research only" },
+] as const;
+
 export const SORT_FIELDS = [
   { value: "score", label: "Opportunity score" },
   { value: "event_probability", label: "Event probability" },
@@ -275,6 +456,28 @@ export const SORT_FIELDS = [
   { value: "created_at", label: "Date found" },
   { value: "company", label: "Company name" },
 ] as const;
+
+/**
+ * Readable department names. Title-casing the enum gives "Pr" and "Hr", which
+ * read as typos. Mirrors DEPARTMENT_LABEL on the backend.
+ */
+const DEPARTMENT_LABEL: Record<string, string> = {
+  MARKETING: "Marketing",
+  CORPORATE_COMMUNICATIONS: "Corporate communications",
+  COMMUNICATIONS: "Communications",
+  PR: "PR",
+  EVENTS: "Events",
+  PROCUREMENT: "Procurement",
+  BUSINESS_DEVELOPMENT: "Business development",
+  HR: "HR",
+  EXECUTIVE_OFFICE: "Executive office",
+  OTHER: "Other",
+  UNKNOWN: "Department unknown",
+};
+
+export function departmentLabel(department: string): string {
+  return DEPARTMENT_LABEL[department] ?? humanize(department);
+}
 
 /** Turn an enum value into something readable. */
 export function humanize(value: string): string {

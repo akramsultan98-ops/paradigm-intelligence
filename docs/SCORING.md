@@ -160,7 +160,15 @@ otherwise 20.
 
 Department relevance: `EVENTS` and `MARKETING` 100,
 `CORPORATE_COMMUNICATIONS` 95, `COMMUNICATIONS` 90, `PR` 85, `PROCUREMENT` 80,
-`BUSINESS_DEVELOPMENT` 70, `HR` 60, `OTHER` 25, `UNKNOWN` 20.
+`BUSINESS_DEVELOPMENT` 70, `EXECUTIVE_OFFICE` 65, `HR` 60, `OTHER` 25, `UNKNOWN` 20.
+
+This is relevance *in general*. Which department to approach for a **particular**
+event is a different question, answered per opportunity type in
+`scoring/contact_routing.py`: an exhibition is marketing's, an internal town hall is
+HR's, a VIP dinner is usually the executive office's. A department not listed for a
+type still ranks — below the ones that are — so nothing is dropped and nothing is
+forced onto a company that does not have it. The ranking also prefers a named person
+over a departmental inbox at equal evidence, using `contacts.contact_kind`.
 
 Evidence quality from `email_status` (`VERIFIED` 100, `PUBLIC` 80, `INFERRED` 35,
 `UNKNOWN` 20), lifted to at least 60 and bonused +10 when a LinkedIn URL is
@@ -199,6 +207,49 @@ coordinators is *halved*, while genuine corroboration earns at most 9 points.
 
 `window_ends_on` = signal publication date + the window's upper bound (14, 30, 60,
 90, 183, 365 days; `NULL` for `UNKNOWN`). It drives missed-window decay.
+
+### 5a. Commercial timing: what can still be done about it
+
+The timing *score* above says how urgent an opportunity is. It does not say whether
+the work can still be won, which is the question an Account Manager actually asks —
+and the answer is counter-intuitive: **an event two weeks away is usually already
+contracted.** Its value is the account, not the job.
+
+`timing_class` answers it, in `scoring/event_timing.py`, separately from the score:
+
+| Class | Meaning | What to do |
+|---|---|---|
+| `IMMEDIATE` | lead time longer than `TIMING_CONTRACTED_LEAD_DAYS` (default 21) | bid for it |
+| `FUTURE_ACCOUNT` | upcoming but inside that window, or undated | build the relationship for the next one |
+| `HISTORICAL` | the event has happened | account research only |
+
+Evidence is used strongest-first, and the fallbacks get weaker deliberately:
+
+1. the source reports the event has already taken place → `HISTORICAL`
+2. a stated `event_date` → past is `HISTORICAL`, within the threshold is
+   `FUTURE_ACCOUNT`, beyond it is `IMMEDIATE`
+3. `window_ends_on` → same thresholds, but a closed window is `FUTURE_ACCOUNT` and
+   never `HISTORICAL`: a stale window means we lost track, not that the event
+   happened, and asserting otherwise would state something no source said
+4. the fuzzy `opportunity_window` → its representative lead time
+5. nothing at all → `FUTURE_ACCOUNT`, because immediacy has to be evidenced
+
+`event_date` is only ever read from a source. Nothing infers one, so a date on the
+profile is a fact and its absence is visible as UNKNOWN.
+
+Two consequences worth stating plainly:
+
+- **A `HISTORICAL` opportunity leaves the ranking.** The Top 50 excludes it unless
+  asked for, whatever it scores — a past event is not a live opportunity, and a high
+  score does not resurrect it.
+- **`timing_class` is recomputed on every scoring pass.** The same event moves from
+  biddable to account-relationship to history purely by the calendar advancing, with
+  no new evidence at all.
+
+`timing_class` does not change the score. It changes what the profile tells you to
+say, which is where it belongs: a company whose event is already contracted is still
+worth the same relationship, and pretending otherwise by docking its score would
+hide it.
 
 ---
 
@@ -259,12 +310,15 @@ on its own. A missed window drops it immediately — 84 × 0.60 = 50.
 ```sql
 WHERE score >= MIN_QUALIFYING_SCORE   -- 70
   AND status NOT IN ('WON', 'LOST')
+  AND timing_class <> 'HISTORICAL'    -- unless include_historical=true
 ORDER BY score DESC, event_probability DESC, created_at ASC
 LIMIT TOP_N                           -- 50
 ```
 
 `WON` and `LOST` opportunities are closed and leave the list; the other statuses
-are live work and stay.
+are live work and stay. A past event leaves it too, whatever it scores — it is
+account research, and `?include_historical=true` or `?timing=HISTORICAL` is how you
+ask for it deliberately.
 
 Two rules matter more than the arithmetic:
 
@@ -304,6 +358,10 @@ extracting at all.
 3. The five `WEIGHT_*` values — what the business actually cares about.
 4. `DECAY_TAU_DAYS` — how fast the list turns over.
 5. `CONTACT_QUALITY_FLOOR` — how much a contactless opportunity is punished.
+6. `TIMING_CONTRACTED_LEAD_DAYS` — how close an event has to be before it is treated
+   as already contracted. It changes nothing about the ranking, only whether the
+   profile says "bid for it" or "build the relationship", so it is safe to tune to
+   how quickly PARADIGM can actually mobilise.
 
 Change one at a time and compare Top 50 membership before and after.
 

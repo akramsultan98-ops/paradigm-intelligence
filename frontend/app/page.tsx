@@ -13,6 +13,7 @@ import {
   OPPORTUNITY_TYPES,
   Opportunity,
   SORT_FIELDS,
+  TIMING_CLASSES,
   fetchSectors,
   fetchTop50,
   humanize,
@@ -26,6 +27,7 @@ import {
   ScoreBadge,
   ScorePanel,
   SourceLine,
+  TimingBadge,
 } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +49,7 @@ function Card({ opportunity }: { opportunity: Opportunity }) {
 
         <div className="tags">
           <span className="tag strong">{humanize(o.type)}</span>
+          <TimingBadge timing={o.timing_class} eventDate={o.event_date} />
           <AssertionTag level={o.assertion_level} />
           <span className="tag">{humanize(o.status)}</span>
           <span className="tag">{o.opportunity_window.replace(/_/g, " ")}</span>
@@ -65,6 +68,13 @@ function Card({ opportunity }: { opportunity: Opportunity }) {
           <div className="k">Why now</div>
           <div className="v">{o.why_now}</div>
         </div>
+
+        {o.timing_rationale && (
+          <div className="block">
+            <div className="k">Timing</div>
+            <div className="v">{o.timing_rationale}</div>
+          </div>
+        )}
 
         <div className="block">
           <div className="k">Sales angle</div>
@@ -128,6 +138,8 @@ export default async function Page({
     status: pick("status"),
     type: pick("type"),
     date_from: pick("date_from"),
+    timing: pick("timing"),
+    include_historical: pick("include_historical"),
     search: pick("search"),
     sort: pick("sort"),
     order: pick("order"),
@@ -241,6 +253,18 @@ export default async function Page({
               <label>
                 Found since
                 <input type="date" name="date_from" defaultValue={filters.date_from ?? ""} />
+              </label>
+
+              <label>
+                Timing
+                <select name="timing" defaultValue={filters.timing ?? ""}>
+                  <option value="">Live only (excludes past events)</option>
+                  {TIMING_CLASSES.map((entry) => (
+                    <option key={entry.value} value={entry.value}>
+                      {entry.label}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label>

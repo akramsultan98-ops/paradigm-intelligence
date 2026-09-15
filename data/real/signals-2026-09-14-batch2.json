@@ -65,7 +65,8 @@
           "repeat_potential": "HIGH",
           "brand_value": "MEDIUM"
         },
-        "confidence": 0.88
+        "confidence": 0.88,
+        "event_date": "2026-10-12"
       }
     },
     {
@@ -120,7 +121,8 @@
           "repeat_potential": "HIGH",
           "brand_value": "MEDIUM"
         },
-        "confidence": 0.85
+        "confidence": 0.85,
+        "event_date": "2026-10-20"
       }
     },
     {

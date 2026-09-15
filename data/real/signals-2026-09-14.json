@@ -277,7 +277,8 @@
           "repeat_potential": "HIGH",
           "brand_value": "HIGH"
         },
-        "confidence": 0.9
+        "confidence": 0.9,
+        "event_date": "2026-09-30"
       }
     },
     {
@@ -327,7 +328,8 @@
           "repeat_potential": "LOW",
           "brand_value": "LOW"
         },
-        "confidence": 0.8
+        "confidence": 0.8,
+        "event_already_occurred": true
       }
     },
     {

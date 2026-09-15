@@ -1,6 +1,6 @@
 # DATA MODEL
 
-Five tables. That is the whole V1 schema, as required by the product spec.
+Six tables: the five the product spec requires, plus `outreach_log`.
 
 ```
 sources ──┬──▶ signals ──▶ opportunities ──┐
@@ -9,12 +9,19 @@ sources ──┬──▶ signals ──▶ opportunities ──┐
                   │                        │
                   ▼                        ▼
               companies ◀──────────────────┘
+                  ▲
+                  └──── outreach_log ────▶ (contacts, opportunities)
 ```
 
-A sixth table was not added. Score history for the daily brief is carried on the
-opportunity row itself (`previous_score`, `previous_classification`,
-`score_changed_at`), which is enough to report NEW / UPGRADED / DOWNGRADED /
-EXPIRED without an events table.
+Score history for the daily brief needs no table of its own: it is carried on the
+opportunity row (`previous_score`, `previous_classification`, `score_changed_at`),
+which is enough to report NEW / UPGRADED / DOWNGRADED / EXPIRED.
+
+`outreach_log` does need one. "Record what was said and when to come back" means
+many rows per company over time, which no number of columns on `contacts` can
+represent. Current state (status, last contacted, next follow-up) is denormalised
+onto `contacts` so a company profile renders in one query; the log is the history.
+That is the whole of it — this is not a CRM and must not grow into one.
 
 ---
 
@@ -65,11 +72,22 @@ both slower and less stable.
 | `normalized_email` | text, nullable | dedupe key |
 | `linkedin_url` | text, nullable | |
 | `normalized_linkedin_url` | text, nullable | dedupe key |
+| `phone` | text, nullable | published business number only, never derived |
+| `normalized_phone` | text, nullable | digits, leading `+` kept |
+| `contact_kind` | enum, not null | `NAMED_INDIVIDUAL` / `DEPARTMENT_ROUTE` / `UNKNOWN` |
 | `email_status` | enum, not null | `VERIFIED` / `PUBLIC` / `INFERRED` / `UNKNOWN` |
 | `contact_score` | int 0–100, not null | see `SCORING.md` |
 | `confidence` | numeric(3,2) 0–1, not null | evidence confidence |
+| `last_verified_at` | timestamptz, nullable | when it was last confirmed against its source |
+| `outreach_status` | enum, not null | current relationship state, from `outreach_log` |
+| `last_contacted_at` | timestamptz, nullable | denormalised from `outreach_log` |
+| `next_follow_up_on` | date, nullable | denormalised from `outreach_log` |
 | `source_id` | UUID FK → sources, nullable | provenance |
 | `created_at` / `updated_at` | timestamptz | |
+
+`contact_kind` is a column rather than a naming convention because the difference
+between a person and a departmental inbox decides how an Account Manager opens the
+call. Stored as data, it cannot be misread; encoded in a name suffix, it could.
 
 Constraints:
 - unique `(company_id, normalized_name, department)`
@@ -139,6 +157,9 @@ Indexes: `(company_id, published_at DESC)`, `type`.
 | `opportunity_window` | enum, not null | `DAYS_0_14` … `UNKNOWN` |
 | `window_ends_on` | date, nullable | used for missed-window decay |
 | `recommended_contact_timing` | enum, not null | |
+| `event_date` | date, nullable | only when a source states one; never inferred |
+| `timing_class` | enum, not null | `IMMEDIATE` / `FUTURE_ACCOUNT` / `HISTORICAL` |
+| `timing_rationale` | text, nullable | the sentence explaining the class |
 | `status` | enum, not null | `NEW` / `QUALIFIED` / `CONTACTED` / `MEETING` / `WON` / `LOST` / `NURTURE` |
 | `previous_score` | int, nullable | for the daily brief |
 | `previous_classification` | enum, nullable | for the daily brief |
@@ -150,6 +171,44 @@ Constraints and indexes:
 - unique `(signal_id, type)` — one opportunity per signal per event type
 - index `score DESC` (the Top 50 read path)
 - index `status`, `company_id`, `type`, `created_at`
+- index `timing_class`, `event_date` — the Top 50 excludes `HISTORICAL` by default
+
+`timing_class` is recomputed on every scoring pass rather than stored once: the same
+event moves from biddable to account-relationship to history purely by the calendar
+advancing, with no new evidence. See `SCORING.md`.
+
+---
+
+## outreach_log
+
+What was actually done, and when. One row per interaction.
+
+| column | type | notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `company_id` | UUID FK → companies, not null, `ON DELETE CASCADE` | always company-scoped |
+| `contact_id` | UUID FK → contacts, nullable, `ON DELETE SET NULL` | null when nobody is named yet |
+| `opportunity_id` | UUID FK → opportunities, nullable, `ON DELETE SET NULL` | what prompted it |
+| `action` | enum, not null | `EMAIL_SENT` / `CALL_MADE` / `CALL_ATTEMPTED` / `LINKEDIN_MESSAGE` / `MEETING_HELD` / `PROPOSAL_SENT` / `INTRODUCTION_REQUESTED` / `NOTE` |
+| `status_after` | enum, not null | the relationship state this action moved it to |
+| `occurred_at` | timestamptz, not null | business time; may differ from `created_at` |
+| `next_follow_up_on` | date, nullable | when to come back |
+| `note` | text, nullable | what was said |
+| `logged_by` | text, nullable | free text: V1 has one shared API key, not user accounts |
+| `created_at` | timestamptz | |
+
+Constraints and indexes:
+- check `note IS NULL OR length(trim(note)) > 0` — a blank note is not stored
+- index `(company_id, occurred_at DESC)` — the company timeline read path
+- index `contact_id`, `opportunity_id`, `created_at`
+
+`company_id` is required and `contact_id` is not, deliberately: an account can be
+worked before there is a person to attach anything to, which is most accounts at the
+start. A follow-up promised on the account is read back from the most recent
+unattached row, so it cannot be lost from the working list.
+
+Deleting a contact or opportunity keeps the history (`SET NULL`); deleting a company
+removes it (`CASCADE`), because without the company the rows mean nothing.
 
 ---
 
@@ -205,18 +264,27 @@ Implemented in `backend/app/services/normalize.py` and unit-tested.
 
 ## Migrations
 
-Two revisions, both verified to run forward and backward with zero model drift:
+Three revisions, each verified to run forward and backward with zero model drift:
 
 1. `eacf37c1aaa8` — initial schema.
 2. `730e524fdce6` — `sources.ingest_mode`, `companies.parent_company_id`, and the
    three `opportunities` statement columns.
+3. `b2f09d3cd683` — contact intelligence (`phone`, `normalized_phone`,
+   `contact_kind`, `last_verified_at`, `outreach_status`, `last_contacted_at`,
+   `next_follow_up_on` on `contacts`), event timing (`event_date`, `timing_class`,
+   `timing_rationale` on `opportunities`), and the `outreach_log` table.
 
-`ingest_mode` was added `NOT NULL` with a temporary server default so existing rows
-backfill, and the default is then dropped — the model stays the single source of
-truth for defaults, and a leftover server default would show as schema drift.
-Alembic does not autogenerate `CHECK` constraints, so `parent_is_not_self` is
-written explicitly; note that the metadata naming convention expands a bare
-constraint name, so `drop_constraint` takes the bare name too.
+Each new `NOT NULL` enum column is added with a temporary server default so existing
+rows backfill, and the default is then dropped — the model stays the single source of
+truth for defaults, and a leftover server default would show as schema drift. The
+backfill values are the conservative ones: `contact_kind` `UNKNOWN` (never claim a
+row is a person) and `timing_class` `FUTURE_ACCOUNT` (never claim an unscored
+opportunity is biddable); the next scoring pass replaces the latter with a computed
+value.
+
+Alembic does not autogenerate a `CHECK` constraint added after a table exists, so
+`parent_is_not_self` is written explicitly; note that the metadata naming convention
+expands a bare constraint name, so `drop_constraint` takes the bare name too.
 
 ## Enum storage
 

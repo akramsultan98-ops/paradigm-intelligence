@@ -288,7 +288,7 @@ def test_logging_outreach_updates_the_profile_and_the_working_list(
     assert body["outreach_history"][0]["note"].startswith("Show is contracted")
     assert body["contacts"][0]["next_follow_up_on"] == follow_up.isoformat()
     # And the first action now picks up from where the relationship is.
-    assert "already nurture" in body["recommended_first_action"]
+    assert "is being nurtured for a future cycle" in body["recommended_first_action"]
 
 
 def test_the_follow_up_list_shows_who_is_owed_a_call(client, session) -> None:
@@ -312,6 +312,55 @@ def test_the_follow_up_list_shows_who_is_owed_a_call(client, session) -> None:
     assert due["company_name"] == "Overdue Industries"
     assert due["days_overdue"] == 3
     assert due["contact"]["name"] == contact.name
+
+
+def test_an_account_worked_without_a_named_contact_still_appears(client, session) -> None:
+    """The case this feature exists for, through the API."""
+    company = make_company(session, "Contracted Already Holdings")
+    session.commit()
+
+    client.post(
+        f"/api/v1/companies/{company.id}/outreach",
+        json={
+            "action": "NOTE",
+            "status_after": "NURTURE",
+            "next_follow_up_on": (date.today() - timedelta(days=1)).isoformat(),
+            "note": "Event is contracted elsewhere. Revisit for next year's calendar.",
+        },
+    )
+
+    [due] = client.get("/api/v1/outreach/follow-ups").json()
+    assert due["company_name"] == "Contracted Already Holdings"
+    assert due["contact"] is None
+    assert due["days_overdue"] == 1
+
+
+def test_the_follow_up_list_can_look_ahead_without_changing_anything(
+    client, session
+) -> None:
+    """"What is owed by Friday" — a read, not a reschedule."""
+    company = make_company(session, "Later Holdings")
+    session.commit()
+    promised = date.today() + timedelta(days=10)
+    client.post(
+        f"/api/v1/companies/{company.id}/outreach",
+        json={
+            "action": "NOTE",
+            "next_follow_up_on": promised.isoformat(),
+            "note": "Come back after their board meeting.",
+        },
+    )
+
+    assert client.get("/api/v1/outreach/follow-ups").json() == []
+
+    ahead = client.get(
+        "/api/v1/outreach/follow-ups",
+        params={"as_of": (promised + timedelta(days=2)).isoformat()},
+    ).json()
+    assert [entry["company_name"] for entry in ahead] == ["Later Holdings"]
+    assert ahead[0]["days_overdue"] == 2
+    # And the promise itself is untouched.
+    assert client.get("/api/v1/outreach/follow-ups").json() == []
 
 
 def test_outreach_history_endpoint_mirrors_the_profile(client, session) -> None:
@@ -398,3 +447,19 @@ def test_no_opportunities_means_no_routing_and_an_account_opening(session) -> No
     )
     assert company_profile.routing_opportunity([]) is None
     assert "No live event" in action
+
+
+def test_every_outreach_status_reads_as_a_sentence() -> None:
+    """"is already nurture" is not English, and an Account Manager reads this."""
+    for status in OutreachStatus:
+        action = company_profile.recommend_first_action(
+            company_name="Some Company",
+            opportunity=None,
+            ranked=[],
+            outreach_status=status,
+        )
+        assert action.startswith(("Some Company ", "No live event is on file")), status
+        # A raw enum value leaking into prose is the bug this guards.
+        assert "_" not in action, status
+        if status is not OutreachStatus.NOT_CONTACTED:
+            assert company_profile._STATUS_PHRASE[status] in action

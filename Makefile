@@ -1,6 +1,6 @@
 # PARADIGM INTELLIGENCE - common tasks
 .DEFAULT_GOAL := help
-.PHONY: help venv up down logs build migrate revision test test-unit lint fmt ingest rescore brief status shell-db clean
+.PHONY: help venv up down logs build migrate revision test test-unit lint fmt ingest rescore brief status shell-db clean load-real-data
 
 VENV    := .venv
 PY      := $(VENV)/bin/python
@@ -45,6 +45,9 @@ lint: ## Lint
 
 fmt: ## Auto-fix lint findings
 	cd $(BACKEND) && ../$(VENV)/bin/ruff check --fix app tests
+
+load-real-data: ## Load data/real through the analyst intake API (needs the API running)
+	$(PY) scripts/load_real_data.py
 
 ingest: ## Fetch sources, extract and score
 	cd $(BACKEND) && ../$(PY) -m app.cli ingest

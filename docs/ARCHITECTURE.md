@@ -9,6 +9,14 @@ in Egypt.**
 It is not a scraper, not a contact database, not a CRM. Everything below exists
 only to serve the Top 50.
 
+One deliberate extension of that boundary: the list is worked by an Account Manager,
+so the system also has to say **who to approach at each company and what was last
+said to them**. A ranked company nobody can reach is not an opportunity. That is the
+whole of `scoring/contact_routing.py`, `scoring/event_timing.py`,
+`services/outreach.py` and the `outreach_log` table — enough to run an account
+relationship, and firmly short of a CRM (no sending, no pipeline management, no
+forecasting).
+
 ## Shape
 
 A **modular monolith**. One FastAPI process, one PostgreSQL database, one Next.js
@@ -39,12 +47,19 @@ the CLI — the same code either way.
                       │      │                                     │
                       │      ▼                                     │
                       │  api/        top50 · detail · company ·    │
-                      │              brief · ingest · maintenance  │
+                      │              brief · ingest · outreach ·   │
+                      │              maintenance                   │
                       └────────────────────────────────────────────┘
                                           │
                                           ▼
-                    frontend (Next.js): Top 50 · detail · company · brief
+       frontend (Next.js): Top 50 · detail · company profile · brief · follow-ups
 ```
+
+`scoring/` holds two modules that are not score arithmetic: `event_timing.py` decides
+whether an opportunity can still be won, and `contact_routing.py` decides who to
+approach for it. Both are pure functions of stored evidence, which is why they live
+beside the scorer rather than in the API — and both are recomputed rather than
+cached, because the calendar moves on its own.
 
 ## The pipeline
 
@@ -189,7 +204,8 @@ vector fails fast rather than silently skewing every score.
 
 ## What is intentionally absent
 
-Outreach sending, CRM pipeline management, multi-country support, a queue, a
-warehouse, per-source bespoke scrapers, and any government or procurement adapter
-whose access terms have not been verified. Each would cost focus and can be added
-behind the existing seams.
+Outreach **sending** (the log records what a person did; it does not email anybody),
+CRM pipeline management and forecasting, user accounts, multi-country support, a
+queue, a warehouse, per-source bespoke scrapers, and any government or procurement
+adapter whose access terms have not been verified. Each would cost focus and can be
+added behind the existing seams.

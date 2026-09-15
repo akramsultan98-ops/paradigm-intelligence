@@ -6,6 +6,10 @@
     "evidenced by an official page on the company's own website whose existence was",
     "confirmed by search. They give an Account Manager the exact page to use.",
     "",
+    "Every entry is contact_kind DEPARTMENT_ROUTE: an official department route, never",
+    "a named person. The database stores that distinction as a column rather than as a",
+    "naming convention, so nothing here can be presented as somebody to ask for by name.",
+    "",
     "What these are NOT: named individuals, and not email addresses. No address could",
     "be obtained for any of these companies from this environment - the pages exist but",
     "cannot be fetched (egress blocked), and search results do not expose the",
@@ -30,7 +34,8 @@
       "confidence": 0.6,
       "source_url": "https://elsewedyelectric.com/en/media",
       "source_title": "Media - Elsewedy Electric official website",
-      "source_type": "COMPANY"
+      "source_type": "COMPANY",
+      "contact_kind": "DEPARTMENT_ROUTE"
     },
     {
       "company_name": "Elsewedy Electric",
@@ -40,7 +45,8 @@
       "confidence": 0.55,
       "source_url": "https://elsewedyelectric.com/en/contact-us",
       "source_title": "Contact Us - Elsewedy Electric official website",
-      "source_type": "COMPANY"
+      "source_type": "COMPANY",
+      "contact_kind": "DEPARTMENT_ROUTE"
     },
     {
       "company_name": "Egypt Energy Exhibition",
@@ -50,7 +56,8 @@
       "confidence": 0.6,
       "source_url": "https://www.egypt-energy.com/en/exhibit.html",
       "source_title": "Exhibit - Egypt Energy official website",
-      "source_type": "COMPANY"
+      "source_type": "COMPANY",
+      "contact_kind": "DEPARTMENT_ROUTE"
     },
     {
       "company_name": "Mediterranean Offshore Conference",
@@ -60,7 +67,8 @@
       "confidence": 0.55,
       "source_url": "https://moc-egypt.com/",
       "source_title": "Mediterranean Offshore Conference official website",
-      "source_type": "COMPANY"
+      "source_type": "COMPANY",
+      "contact_kind": "DEPARTMENT_ROUTE"
     }
   ]
 }

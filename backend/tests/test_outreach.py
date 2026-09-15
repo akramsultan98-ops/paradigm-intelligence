@@ -245,8 +245,67 @@ def test_due_follow_ups_lists_today_and_earlier_only(session) -> None:
     later.next_follow_up_on = today + timedelta(days=9)
     session.flush()
 
-    names = [contact.name for contact in due_follow_ups(session, on=today)]
+    names = [item.contact.name for item in due_follow_ups(session, on=today) if item.contact]
     assert names == ["Overdue Person", "Due Today"]
+
+
+def test_an_account_level_follow_up_is_not_hidden(session) -> None:
+    """A promise made with no named contact is still a promise.
+
+    Before anybody is named — which is most accounts at the start — the follow-up
+    lives on the account. Listing only contact-held dates would drop them silently.
+    """
+    company = make_company(session, "No Named Contact Holdings")
+    today = date.today()
+    _log(
+        session,
+        company,
+        action=OutreachAction.NOTE,
+        next_follow_up_on=today - timedelta(days=4),
+        note="Show is contracted; come back after it to talk about next year.",
+    )
+
+    [item] = due_follow_ups(session, on=today)
+    assert item.contact is None
+    assert item.company.name == "No Named Contact Holdings"
+    assert item.due_on == today - timedelta(days=4)
+
+
+def test_the_latest_account_promise_is_the_one_that_stands(session) -> None:
+    company = make_company(session)
+    today = date.today()
+    now = datetime.now(UTC)
+    _log(
+        session,
+        company,
+        action=OutreachAction.NOTE,
+        occurred_at=now - timedelta(days=30),
+        next_follow_up_on=today - timedelta(days=20),
+        note="Superseded.",
+    )
+    _log(
+        session,
+        company,
+        action=OutreachAction.NOTE,
+        occurred_at=now - timedelta(days=1),
+        next_follow_up_on=today - timedelta(days=1),
+        note="This is the promise that still stands.",
+    )
+
+    [item] = due_follow_ups(session, on=today)
+    assert item.due_on == today - timedelta(days=1)
+
+
+def test_a_future_account_promise_is_not_due_yet(session) -> None:
+    company = make_company(session)
+    _log(
+        session,
+        company,
+        action=OutreachAction.NOTE,
+        next_follow_up_on=date.today() + timedelta(days=30),
+        note="Later.",
+    )
+    assert due_follow_ups(session, on=date.today()) == []
 
 
 def test_a_contracted_event_still_supports_relationship_building(session) -> None:

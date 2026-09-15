@@ -145,6 +145,27 @@ DEFAULT_PREFERENCE: tuple[Department, ...] = (
     Department.PROCUREMENT, Department.EXECUTIVE_OFFICE, Department.HR,
 )
 
+#: Readable department names. Title-casing the enum gives "Pr" and
+#: "Hr", which read as typos in text an Account Manager sees.
+DEPARTMENT_LABEL: dict[Department, str] = {
+    Department.MARKETING: "Marketing",
+    Department.CORPORATE_COMMUNICATIONS: "Corporate communications",
+    Department.COMMUNICATIONS: "Communications",
+    Department.PR: "PR",
+    Department.EVENTS: "Events",
+    Department.PROCUREMENT: "Procurement",
+    Department.BUSINESS_DEVELOPMENT: "Business development",
+    Department.HR: "HR",
+    Department.EXECUTIVE_OFFICE: "The executive office",
+    Department.OTHER: "This department",
+    Department.UNKNOWN: "An unidentified department",
+}
+
+
+def department_label(department: Department) -> str:
+    return DEPARTMENT_LABEL.get(department, department.value.replace("_", " ").title())
+
+
 #: Why each department is the route, in an Account Manager's terms.
 DEPARTMENT_RATIONALE: dict[Department, str] = {
     Department.MARKETING: "Marketing usually holds the budget for this kind of activity.",
@@ -230,8 +251,8 @@ def rank_contacts(
             reason = DEPARTMENT_RATIONALE.get(contact.department, "")
         else:
             reason = (
-                f"{contact.department.value.replace('_', ' ').title()} is not a usual "
-                "route for this activity — use only if there is no better contact."
+                f"{department_label(contact.department)} is not a usual route for this "
+                "activity — use only if there is no better contact."
             )
         ranked.append(RankedContact(contact, position, fit, reason))
     return ranked

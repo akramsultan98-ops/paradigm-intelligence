@@ -124,10 +124,15 @@ class OutreachCreate(BaseModel):
 
 
 class FollowUpDue(BaseModel):
-    """A contact who is owed a call, for the working list."""
+    """Something owed a next step, for the working list.
 
-    contact: ContactRef
+    ``contact`` is ``None`` when the follow-up was promised on the account rather
+    than to a named person — the normal case before anybody is named, and one the
+    list must not hide.
+    """
+
     company_id: uuid.UUID
     company_name: str
     next_follow_up_on: date
     days_overdue: int
+    contact: ContactRef | None = None

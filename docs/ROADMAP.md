@@ -5,12 +5,12 @@
 Everything here is in the repository, exercised by the test suite, and — where the
 build environment allowed it — run against real data.
 
-**Foundation.** FastAPI, PostgreSQL, two Alembic revisions (both verified to run
+**Foundation.** FastAPI, PostgreSQL, three Alembic revisions (each verified to run
 forward and backward with zero model drift), Docker Compose (config validated; see
 the gap below), configuration with startup validation, structured logging, health
-and readiness probes, 435 tests.
+and readiness probes, 562 tests.
 
-**Data model.** Five tables, real constraints and indexes, explicit deduplication
+**Data model.** Six tables, real constraints and indexes, explicit deduplication
 for companies, contacts, signals, opportunities and sources. Provenance
 (`AUTOMATED` / `ANALYST` / `TEST`) and parent/subsidiary links.
 
@@ -35,11 +35,37 @@ event probability. Top 50 selection with a hard floor and no padding.
 
 **Contact intelligence.** Discovery from public company pages, department and
 seniority classification, damped roll-up into the opportunity score, and
-re-scoring of affected companies after discovery.
+re-scoring of affected companies after discovery. Every contact is stored as a
+named individual or an official department route — a column, not a naming
+convention — with its source page, its verification date, and every public channel
+listed explicitly so an absent one reads as UNKNOWN rather than as blank space.
 
-**Interface.** Four pages — Top 50, opportunity detail, company profile, daily
-brief — with filtering by sector, score, status, type and date, sorting on eight
-fields, and search across company name, contact name and contact email.
+**Contact routing.** Which department to approach depends on the event: an
+exhibition is marketing's, an internal town hall is HR's, a VIP dinner is usually
+the executive office's. Roughly thirty opportunity types have an ordered preference
+list with a stated reason for each department. Unlisted departments still rank,
+below the listed ones, so nothing is discarded and nothing is forced onto a company
+that does not have it. The profile also names the departments a company's own events
+need but we hold no contact for.
+
+**Event timing.** Every opportunity is classed `IMMEDIATE`, `FUTURE_ACCOUNT` or
+`HISTORICAL` from the strongest evidence available, and a past event leaves the
+ranking whatever it scores. Recomputed on every pass, because the calendar moves on
+its own. `event_date` is only ever read from a source; nothing infers one.
+
+**Outreach tracking.** `outreach_log` records what was done, to whom, about what,
+and when to come back, with current state denormalised onto the contact so a profile
+renders in one query. Company-scoped, so an account can be worked before anybody is
+named — and a follow-up promised on the account cannot be lost from the working
+list. Enough to build a relationship with a company whose current event is already
+contracted, which is the point; not a CRM.
+
+**Interface.** Five pages — Top 50, opportunity detail, contact-first company
+profile, daily brief, follow-ups — with filtering by sector, score, status, type,
+date and timing class, sorting on eight fields, and search across company name,
+contact name and contact email. The outreach form is a plain HTML form posting to a
+server action, so the one write path in the UI needs no client-side JavaScript and
+the API key never reaches a browser.
 
 **Source preflight.** `python -m app.cli check-sources` (and
 `GET /api/v1/sources/health`) probes every configured source and reports a verdict
@@ -95,11 +121,17 @@ on the company's own website (Elsewedy Electric's media and contact pages, Egypt
 Energy's exhibitor page, MOC's site). All carry `email_status: UNKNOWN`, which the
 UI displays explicitly.
 
-No named individuals and no addresses, for two separate reasons:
+No named individuals, no addresses and no phone numbers, for separate reasons:
 
 - **Addresses:** the official contact pages exist but cannot be fetched (same
   egress block), and search results do not expose the addresses printed on them.
   Deriving an address from a name pattern is forbidden, so the answer is `UNKNOWN`.
+- **Phone numbers:** one search summary did report exhibition-team numbers for
+  Egypt Energy. A second search of the same page contradicted it, reporting no
+  published numbers at all, and the page itself cannot be fetched to settle it.
+  An unverifiable number is worse than `UNKNOWN` — an Account Manager would dial a
+  stranger — so nothing was stored. The `phone` column and its normalizer are in
+  place for when a page can actually be read.
 - **Names:** searching did surface named marketing and communications executives —
   but only via contact-data brokers whose product *is* aggregated personal contact
   data. Citing those as provenance would breach the rule that only publicly
@@ -113,9 +145,15 @@ route scores about 45, so `contact_quality` contributes roughly 9 of the 20 poin
 available. That is the scoring working as designed, and it is a fair measure of how
 much a real named decision-maker is worth.
 
-**What unblocks it:** egress. `ContactPageAdapter` is implemented and tested, and
-the real leadership-page URLs are already in the registry as templates — once those
-pages are reachable, `python -m app.cli discover-contacts` reads them.
+**What unblocks it:** egress. `ContactPageAdapter` is implemented and tested, sets
+`contact_kind` per contact, and the real leadership-page URLs are already in the
+registry as templates — once those pages are reachable,
+`python -m app.cli discover-contacts` reads them.
+
+Note what this gap does *not* block. Routing, timing, the profile and outreach
+tracking all work against department routes, which is what a real Account Manager
+starts with anyway: the profile says which department to approach, why that one for
+this kind of event, which official page to use, and what was said last time.
 
 ### 3. The Docker build is unverified
 
@@ -125,9 +163,9 @@ and the claim "Docker Compose works" is not made.
 
 What *was* verified without a daemon: `docker compose config` validates and
 interpolates correctly, `pip install ./backend` succeeds from `pyproject.toml`
-alone in a clean virtualenv (18 routes, console script working), and the Next.js
-`standalone/server.js` output that the runtime stage copies exists. The non-Docker
-path in `README.md` is fully verified end to end.
+alone in a clean virtualenv, and the Next.js `standalone/server.js` output that the
+runtime stage copies exists. The non-Docker path in `README.md` is fully verified
+end to end — API and web both started, real data loaded, every page rendered.
 
 ### 4. Government and procurement adapters are not written
 
@@ -156,6 +194,14 @@ the brief forbids.
 6. **Company enrichment.** `size_band` and `event_potential_score` come from
    extraction today. A dedicated enrichment pass would improve both scoring inputs
    materially.
+7. **Event-date backfill.** `timing_class` is only as good as the dates it has, and
+   three of eighteen real signals carry one. Exhibition and conference organisers
+   publish dates on their own sites, so a small adapter that reads an event page for
+   its date would move a meaningful share of the list from window-derived timing to
+   evidenced timing. Everything downstream already prefers a real date.
+8. **Outreach ownership.** `logged_by` is free text because V1 has one shared API
+   key. Real user accounts are what turn the follow-up list from "what is owed" into
+   "what *I* owe", and nothing in the schema blocks it.
 
 ## V2 — once V1 is earning its keep
 

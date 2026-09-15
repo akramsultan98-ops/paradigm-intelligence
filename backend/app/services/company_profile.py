@@ -37,6 +37,7 @@ from app.schemas.outreach import (
 )
 from app.scoring.contact_routing import (
     DEPARTMENT_RATIONALE,
+    department_label,
     preferences_for,
     rank_contacts,
 )
@@ -165,22 +166,58 @@ def timing_counts(opportunities: Sequence[Opportunity]) -> _Timings:
 
 
 def _contact_clause(ranked: Sequence[RankedContactOut]) -> str:
-    """How to open, given who we actually have."""
+    """How to open, given who we actually have.
+
+    Says out loud when there is no direct channel: an Account Manager who thinks
+    they have an address and does not will lose a day finding out.
+    """
     if not ranked:
         return (
             "No public contact is on file yet — find the department route on the "
             "company's own site before calling"
         )
     best = ranked[0].contact
-    where = best.department.value.replace("_", " ").lower()
+    where = department_label(best.department).lower()
+    reachable = bool(best.email or best.phone or best.linkedin_url)
+
     if best.contact_kind is ContactKind.NAMED_INDIVIDUAL:
-        who = f"{best.name}"
-        if best.job_title:
-            who = f"{best.name} ({best.job_title})"
-        return f"Approach {who} in {where}"
+        who = f"{best.name} ({best.job_title})" if best.job_title else best.name
+        if reachable:
+            return f"Approach {who} in {where}"
+        return (
+            f"{who} in {where} is on file but with no published address or number — "
+            f"open the source page for a route"
+        )
+
     if best.contact_kind is ContactKind.DEPARTMENT_ROUTE:
-        return f"Use the published {where} route ({best.name}) and ask for the events owner"
-    return f"Start with the {where} contact on file and confirm who owns events"
+        if reachable:
+            return f"Use the published {where} route ({best.name}) and ask for the events owner"
+        return (
+            f"The only route on file is the company's published {where} page "
+            f"({best.name}) — no address or number was published, so use the page "
+            f"itself and ask for the events owner"
+        )
+
+    if reachable:
+        return f"Start with the {where} contact on file and confirm who owns events"
+    return (
+        f"The {where} contact on file has no published address or number — "
+        f"use its source page and confirm who owns events"
+    )
+
+
+#: How each status reads in a sentence. "is already nurture" is not English.
+_STATUS_PHRASE: dict[OutreachStatus, str] = {
+    OutreachStatus.NOT_CONTACTED: "has not been contacted",
+    OutreachStatus.ATTEMPTED: "has been approached without a reply yet",
+    OutreachStatus.CONTACTED: "has already been contacted",
+    OutreachStatus.IN_DISCUSSION: "is already in discussion",
+    OutreachStatus.MEETING_BOOKED: "has a meeting booked",
+    OutreachStatus.PROPOSAL_SENT: "has a proposal outstanding",
+    OutreachStatus.WON: "is a won account",
+    OutreachStatus.LOST: "was lost, and is being kept warm",
+    OutreachStatus.NURTURE: "is being nurtured for a future cycle",
+}
 
 
 def recommend_first_action(
@@ -199,10 +236,9 @@ def recommend_first_action(
     opening = _contact_clause(ranked)
 
     if outreach_status is not OutreachStatus.NOT_CONTACTED:
-        state = outreach_status.value.replace("_", " ").lower()
         return (
-            f"{company_name} is already {state}. {opening}, and pick up from the "
-            "last note in the outreach history."
+            f"{company_name} {_STATUS_PHRASE[outreach_status]}. {opening}, and pick up "
+            "from the last note in the outreach history."
         )
 
     if opportunity is None:

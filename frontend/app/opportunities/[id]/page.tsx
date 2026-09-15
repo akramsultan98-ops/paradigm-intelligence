@@ -18,6 +18,8 @@ import {
   ScoreBadge,
   ScorePanel,
   SourceLine,
+  TimingBadge,
+  TimingLegend,
   TruthBlock,
 } from "@/components/ui";
 
@@ -71,6 +73,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             </p>
             <div className="tags">
               <span className="tag strong">{humanize(o.type)}</span>
+              <TimingBadge timing={o.timing_class} eventDate={o.event_date} />
               <AssertionTag level={o.assertion_level} />
               <span className="tag">{humanize(o.status)}</span>
               <span className="tag">{o.commercial_value_band.replace("_", " ")} value</span>
@@ -134,6 +137,19 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             <h3>Opportunity score</h3>
             <ScorePanel o={o} />
             <div className="block">
+              <div className="k">Event date</div>
+              <div className="v">
+                {o.event_date ? formatDate(o.event_date) : "UNKNOWN — no source published one"}
+              </div>
+            </div>
+            <div className="block">
+              <div className="k">What can be done</div>
+              <div className="v">
+                <TimingBadge timing={o.timing_class} />
+                {o.timing_rationale ? <span className="sub"> {o.timing_rationale}</span> : null}
+              </div>
+            </div>
+            <div className="block">
               <div className="k">Opportunity window</div>
               <div className="v">
                 {o.opportunity_window.replace(/_/g, " ")}
@@ -163,6 +179,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
         <section className="panel">
           <h3>Why now</h3>
           <p>{o.why_now}</p>
+          <TimingLegend />
         </section>
 
         <section className="panel">
