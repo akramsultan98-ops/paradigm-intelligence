@@ -12,6 +12,7 @@ import json
 import logging
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
@@ -163,6 +164,131 @@ def cmd_check_sources(args: argparse.Namespace) -> int:
     return 0 if summary["usable"] else 1
 
 
+def _upsert_env_line(path: Path, key: str, value: str) -> str:
+    """Set ``key=value`` in an env file, touching nothing else.
+
+    Rewrites the one line if the key is already there, appends it otherwise, and
+    leaves every other byte — including comments, blank lines and secrets — exactly
+    as it was. Returns "updated" or "added" for the report.
+
+    Deliberately not a general env-file editor. It is pointed at production files
+    that hold database passwords, so it does the least it can.
+    """
+    line = f"{key}={value}"
+    if not path.is_file():
+        path.write_text(line + "\n", encoding="utf-8")
+        return "added"
+
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines()
+    for index, existing in enumerate(lines):
+        stripped = existing.strip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"export {key}="):
+            if stripped == line:
+                return "unchanged"
+            lines[index] = line
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return "updated"
+
+    suffix = "" if original.endswith("\n") or not original else "\n"
+    path.write_text(original + suffix + line + "\n", encoding="utf-8")
+    return "added"
+
+
+def cmd_enable_sources(args: argparse.Namespace) -> int:
+    """Probe the registry and produce the allowlist of sources that actually work.
+
+    This is the enablement path. ``config/sources.json`` ships every entry disabled
+    and is mounted read-only in the container, so enabling a source is a deployment
+    setting — ``SOURCES_ENABLED`` — not a file edit. This command works out what that
+    setting should be by probing, so a source can only be switched on by
+    demonstrating that it is reachable and parses.
+
+    Only ``ACTIVE`` and ``READY_TO_ENABLE`` verdicts qualify. A source that is
+    blocked by egress, 404, serving HTML, certificate-failing or otherwise unusable
+    is never included — including one that is currently enabled but has stopped
+    working, which is reported so it can be dropped.
+
+    Prints the line and stops there by default. ``--write-env PATH`` applies it in
+    place; ``--quiet`` prints only the line, so it can be redirected onto a
+    deployment's env file from outside the container.
+    """
+    from app.services.source_health import check_all
+
+    results = check_all(only=args.source or None)
+    usable = [health for health in results if health.usable]
+    keys = sorted(health.key for health in usable)
+    value = ",".join(keys)
+    broken_but_enabled = sorted(
+        health.key for health in results if health.enabled and not health.usable
+    )
+
+    write_result: str | None = None
+    if args.write_env and keys:
+        write_result = _upsert_env_line(Path(args.write_env), "SOURCES_ENABLED", value)
+
+    if args.quiet:
+        # Only the line, so it can be redirected straight onto a deployment's env
+        # file from outside the container. Diagnostics are already on stderr.
+        if not keys:
+            return 1
+        print(f"SOURCES_ENABLED={value}")
+        return 0
+
+    if args.json:
+        _print(
+            {
+                "command": "enable-sources",
+                "checked": len(results),
+                "enable": keys,
+                "env_line": f"SOURCES_ENABLED={value}",
+                "rejected": [
+                    {"key": h.key, "verdict": h.verdict.value, "detail": h.detail}
+                    for h in results
+                    if not h.usable
+                ],
+                "enabled_but_not_usable": broken_but_enabled,
+                "written_to": args.write_env if write_result else None,
+                "write_result": write_result,
+            }
+        )
+        return 0 if keys else 1
+
+    print(f"Probed {len(results)} configured source(s).\n")
+    for health in results:
+        mark = "ENABLE " if health.usable else "skip   "
+        print(f"  {mark} {health.key:28} {health.verdict.value}")
+        if not health.usable:
+            print(f"           {health.detail[:110]}")
+    print()
+
+    if not keys:
+        print("Nothing is usable from this host, so there is nothing to enable.")
+        print("Run 'check-sources' for the verdict and advice on each source.")
+        return 1
+
+    if broken_but_enabled:
+        print(
+            "These sources are currently enabled but did NOT pass, and are left out "
+            "of the line below: " + ", ".join(broken_but_enabled) + "\n"
+        )
+
+    print("Set this, then restart the API:\n")
+    print(f"  SOURCES_ENABLED={value}\n")
+    if write_result:
+        print(f"{write_result.capitalize()} in {args.write_env}.")
+        print("Restart the API for it to take effect:\n")
+        print("  docker compose up -d api\n")
+    else:
+        print("Re-run with --write-env .env to apply it without editing by hand.\n")
+    print(
+        "One thing this command cannot check: whether each publisher's terms of use "
+        "and robots.txt permit automated access for this purpose. Confirm that "
+        "before leaving a source enabled."
+    )
+    return 0
+
+
 def cmd_status(_: argparse.Namespace) -> int:
     """Configuration and database summary. Useful as a deployment smoke check."""
     from app.services.rescore import classification_counts, eligible_count
@@ -181,6 +307,19 @@ def cmd_status(_: argparse.Namespace) -> int:
     payload["relevance_filter_enabled"] = settings.relevance_enabled
     payload["scheduler_enabled"] = settings.scheduler_enabled
     payload["api_authenticated"] = bool(settings.api_key)
+    # Which sources a run would actually touch, and whether SOURCES_ENABLED is what
+    # decided that. Worth reporting: "ingest found nothing" and "no source is
+    # switched on" look identical from the outside otherwise.
+    try:
+        from app.sources import load_source_configs
+
+        payload["live_sources"] = sorted(
+            config.key for config in load_source_configs() if config.enabled
+        )
+        payload["sources_allowlist"] = settings.sources_enabled or None
+    except ValueError as exc:
+        payload["live_sources"] = []
+        payload["sources_error"] = str(exc)
     if payload["database_reachable"]:
         from sqlalchemy import func, select
 
@@ -252,6 +391,24 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--source", action="append", help="Source key to check. Repeatable.")
     check.add_argument("--json", action="store_true", help="Machine-readable output.")
     check.set_defaults(func=cmd_check_sources)
+
+    enable = subparsers.add_parser(
+        "enable-sources",
+        help="Probe sources and print the SOURCES_ENABLED allowlist of the ones that work.",
+    )
+    enable.add_argument("--source", action="append", help="Source key to probe. Repeatable.")
+    enable.add_argument(
+        "--write-env",
+        metavar="PATH",
+        help="Also set SOURCES_ENABLED in this env file, leaving its other lines alone.",
+    )
+    enable.add_argument("--json", action="store_true", help="Machine-readable output.")
+    enable.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Print only the SOURCES_ENABLED= line, for redirecting into an env file.",
+    )
+    enable.set_defaults(func=cmd_enable_sources)
 
     status = subparsers.add_parser("status", help="Show configuration and counts.")
     status.set_defaults(func=cmd_status)

@@ -106,12 +106,50 @@ def _parse_entry(entry: dict, index: int) -> SourceConfig:
     )
 
 
+def apply_enabled_allowlist(
+    configs: list[SourceConfig], enabled: list[str]
+) -> list[SourceConfig]:
+    """Override each config's ``enabled`` flag from an explicit allowlist.
+
+    ``enabled`` empty means "the registry file decides", which is what a fresh
+    deployment gets, and the registry ships everything off.
+
+    A non-empty allowlist is authoritative in *both* directions: the named keys are
+    switched on and every other source is switched off, whatever the file says.
+    That is the point — it makes the set of live sources one reviewable value rather
+    than a flag per entry that can be left switched on by accident.
+
+    An unknown key is an error, not a no-op. A typo would otherwise mean "ingest
+    nothing", reported as a successful run with no documents, which is the single
+    most expensive way for this to fail.
+    """
+    if not enabled:
+        return configs
+
+    wanted = {key.strip() for key in enabled if key.strip()}
+    known = {config.key for config in configs}
+    unknown = sorted(wanted - known)
+    if unknown:
+        raise ValueError(
+            f"SOURCES_ENABLED names source(s) that are not in the registry: "
+            f"{', '.join(unknown)}. Known keys: {', '.join(sorted(known))}"
+        )
+
+    for config in configs:
+        config.enabled = config.key in wanted
+    return configs
+
+
 def load_source_configs(path: str | Path | None = None) -> list[SourceConfig]:
     """Read and validate the source registry.
 
     A missing file is not an error — a fresh deployment has no sources yet, and
     the ingestion command should say "nothing configured" rather than crash.
     Duplicate keys *are* an error, since they would make runs ambiguous.
+
+    ``SOURCES_ENABLED`` is applied here rather than in the callers, so that
+    ingestion, contact discovery, the preflight and the ``sources`` listing all
+    agree on which sources are live.
     """
     settings = get_settings()
     config_path = Path(path or settings.sources_config)
@@ -138,7 +176,7 @@ def load_source_configs(path: str | Path | None = None) -> list[SourceConfig]:
             raise ValueError(f"duplicate source key {config.key!r}")
         seen.add(config.key)
         configs.append(config)
-    return configs
+    return apply_enabled_allowlist(configs, settings.sources_enabled)
 
 
 def load_sources(

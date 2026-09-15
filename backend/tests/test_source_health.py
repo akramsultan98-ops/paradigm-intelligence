@@ -276,3 +276,156 @@ def test_the_shipped_registry_is_probeable(settings: Settings) -> None:
         )
         assert health.verdict in set(Verdict), config.key
         assert health.advice
+
+
+# --------------------------------------------------------------------------
+# enable-sources: writing the allowlist into an env file
+# --------------------------------------------------------------------------
+# This runs against production env files holding database passwords, so the one
+# behaviour that matters is that it changes the single key it was asked to.
+
+
+def test_env_upsert_appends_a_missing_key(tmp_path: Path) -> None:
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / ".env"
+    path.write_text("# config\nPOSTGRES_PASSWORD=secret\n", encoding="utf-8")
+
+    assert _upsert_env_line(path, "SOURCES_ENABLED", "a,b") == "added"
+    assert path.read_text() == "# config\nPOSTGRES_PASSWORD=secret\nSOURCES_ENABLED=a,b\n"
+
+
+def test_env_upsert_replaces_an_existing_key_in_place(tmp_path: Path) -> None:
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / ".env"
+    path.write_text(
+        "POSTGRES_PASSWORD=secret\nSOURCES_ENABLED=old\nAPI_KEY=k\n", encoding="utf-8"
+    )
+
+    assert _upsert_env_line(path, "SOURCES_ENABLED", "new") == "updated"
+    assert path.read_text() == "POSTGRES_PASSWORD=secret\nSOURCES_ENABLED=new\nAPI_KEY=k\n"
+
+
+def test_env_upsert_replaces_an_exported_form(tmp_path: Path) -> None:
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / ".env"
+    path.write_text("export SOURCES_ENABLED=old\n", encoding="utf-8")
+    assert _upsert_env_line(path, "SOURCES_ENABLED", "new") == "updated"
+    assert path.read_text() == "SOURCES_ENABLED=new\n"
+
+
+def test_env_upsert_is_idempotent(tmp_path: Path) -> None:
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / ".env"
+    path.write_text("SOURCES_ENABLED=a,b\n", encoding="utf-8")
+    assert _upsert_env_line(path, "SOURCES_ENABLED", "a,b") == "unchanged"
+    assert path.read_text() == "SOURCES_ENABLED=a,b\n"
+
+
+def test_env_upsert_leaves_every_other_line_byte_identical(tmp_path: Path) -> None:
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / ".env"
+    original = (
+        "# leading comment\n"
+        "\n"
+        "POSTGRES_PASSWORD=p@ss w0rd#with=signs\n"
+        "SOURCES_ENABLED=stale\n"
+        "\n"
+        "# trailing comment\n"
+        "API_KEY=\n"
+    )
+    path.write_text(original, encoding="utf-8")
+    _upsert_env_line(path, "SOURCES_ENABLED", "fresh")
+
+    assert path.read_text() == original.replace("stale", "fresh")
+
+
+def test_env_upsert_does_not_match_a_similarly_named_key(tmp_path: Path) -> None:
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / ".env"
+    path.write_text("SOURCES_ENABLED_EXTRA=keep\n", encoding="utf-8")
+    assert _upsert_env_line(path, "SOURCES_ENABLED", "a") == "added"
+    assert path.read_text() == "SOURCES_ENABLED_EXTRA=keep\nSOURCES_ENABLED=a\n"
+
+
+def test_env_upsert_creates_the_file_when_absent(tmp_path: Path) -> None:
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / "new.env"
+    assert _upsert_env_line(path, "SOURCES_ENABLED", "a") == "added"
+    assert path.read_text() == "SOURCES_ENABLED=a\n"
+
+
+def test_env_upsert_adds_a_newline_before_appending(tmp_path: Path) -> None:
+    """A file that does not end in a newline must not get two keys on one line."""
+    from app.cli import _upsert_env_line
+
+    path = tmp_path / ".env"
+    path.write_text("API_KEY=k", encoding="utf-8")
+    _upsert_env_line(path, "SOURCES_ENABLED", "a")
+    assert path.read_text() == "API_KEY=k\nSOURCES_ENABLED=a\n"
+
+
+def test_enable_sources_selects_only_the_usable_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The safety property: a broken source can never reach the allowlist.
+
+    Including one that is currently enabled and has since stopped working — the
+    command drops it and says so, rather than carrying it forward.
+    """
+    from app import cli
+    from app.services.source_health import SourceHealth, Verdict
+
+    results = [
+        SourceHealth("good", "rss", "COMPANY", False, Verdict.READY_TO_ENABLE, "12 entries"),
+        SourceHealth("already-on", "rss", "COMPANY", True, Verdict.ACTIVE, "8 entries"),
+        SourceHealth("blocked", "rss", "COMPANY", False, Verdict.BLOCKED_BY_EGRESS, "403"),
+        SourceHealth("gone", "rss", "COMPANY", False, Verdict.UNREACHABLE, "HTTP 404"),
+        SourceHealth("html", "rss", "COMPANY", False, Verdict.NOT_USABLE, "not a feed"),
+        SourceHealth("empty", "rss", "COMPANY", False, Verdict.EMPTY, "no entries"),
+        SourceHealth("bad-entry", "rss", "COMPANY", False, Verdict.MISCONFIGURED, "no url"),
+        # Enabled, but no longer working: must be dropped, not carried over.
+        SourceHealth("was-working", "rss", "COMPANY", True, Verdict.UNREACHABLE, "HTTP 500"),
+    ]
+    monkeypatch.setattr(
+        "app.services.source_health.check_all", lambda **_: results, raising=True
+    )
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("POSTGRES_PASSWORD=secret\n", encoding="utf-8")
+    exit_code = cli.main(
+        ["enable-sources", "--write-env", str(env_path), "--quiet"]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "SOURCES_ENABLED=already-on,good"
+    assert env_path.read_text() == (
+        "POSTGRES_PASSWORD=secret\nSOURCES_ENABLED=already-on,good\n"
+    )
+
+
+def test_enable_sources_writes_nothing_when_nothing_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty allowlist would switch everything off; refuse instead."""
+    from app import cli
+    from app.services.source_health import SourceHealth, Verdict
+
+    monkeypatch.setattr(
+        "app.services.source_health.check_all",
+        lambda **_: [
+            SourceHealth("blocked", "rss", "COMPANY", False, Verdict.BLOCKED_BY_EGRESS, "403")
+        ],
+        raising=True,
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text("SOURCES_ENABLED=keep-me\n", encoding="utf-8")
+
+    assert cli.main(["enable-sources", "--write-env", str(env_path)]) == 1
+    assert env_path.read_text() == "SOURCES_ENABLED=keep-me\n"

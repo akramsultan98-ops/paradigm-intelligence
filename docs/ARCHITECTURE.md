@@ -171,6 +171,27 @@ than a parallel path that would drift. It records `ANALYST` provenance and
 `extractor: "analyst"`, and it faces the same relevance gate and the same
 deduplication.
 
+## Enabling a source
+
+The registry ships every entry disabled, and `config/` is mounted read-only in the
+container, so a running deployment cannot edit it. Enablement is therefore a
+setting: `SOURCES_ENABLED` names the keys that run, and when set it replaces the
+file's `enabled` flags entirely — exactly those keys run and every other source is
+off, applied once in `load_source_configs` so ingestion, contact discovery, the
+preflight and the `sources` listing cannot disagree about what is live.
+
+That direction matters as much as the other: a source left `enabled: true` after it
+breaks cannot creep back in, because the allowlist is the whole answer rather than
+one flag among many.
+
+`python -m app.cli enable-sources` builds the line from the preflight's verdicts, so
+a source can only be switched on by demonstrating that it is reachable and parses.
+An unknown key is rejected with the keys that do exist: a typo would otherwise mean
+"ingest nothing", reported as a successful run with no documents, which is the most
+expensive way for this to fail. The API keeps serving either way — a bad ingestion
+setting is not a reason to take the Top 50 offline — and `status` surfaces it as
+`sources_error`.
+
 ## Recurring refresh
 
 `services/scheduler.py` runs one cycle on an interval in a daemon thread, off by

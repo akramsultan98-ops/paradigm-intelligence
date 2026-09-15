@@ -125,8 +125,10 @@ _LOCAL_ADVICE = {
 _ADVICE = {
     Verdict.ACTIVE: "Nothing to do.",
     Verdict.READY_TO_ENABLE: (
-        "Confirm the publisher's terms of use and robots.txt permit automated "
-        "access for this purpose, then set enabled: true in config/sources.json."
+        "Reachable and parsed. Confirm the publisher's terms of use and robots.txt "
+        "permit automated access for this purpose, then add this key to "
+        "SOURCES_ENABLED and restart the API. 'enable-sources' builds that line "
+        "from these verdicts for you."
     ),
     Verdict.BLOCKED_BY_EGRESS: (
         "This network refuses the connection before it reaches the publisher. Run "

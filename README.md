@@ -106,6 +106,7 @@ Then open <http://localhost:3000>.
 
 ```bash
 python -m app.cli check-sources                # probe sources: which work from HERE
+python -m app.cli enable-sources               # the SOURCES_ENABLED line for the ones that do
 python -m app.cli ingest                       # fetch sources, filter, extract, score
 python -m app.cli ingest --source sis-egypt    # one source
 python -m app.cli discover-contacts            # read public contact pages
@@ -122,7 +123,7 @@ completely different fixes:
 
 | Verdict | Meaning |
 |---|---|
-| `READY_TO_ENABLE` | fetched and parsed. Check its terms of use, then enable it. |
+| `READY_TO_ENABLE` | fetched and parsed. Check its terms of use, then add it to `SOURCES_ENABLED`. |
 | `ACTIVE` | working and already enabled. |
 | `BLOCKED_BY_EGRESS` | **your network refused the connection.** The source may be fine; you cannot reach it from here. |
 | `UNREACHABLE` | the connection was allowed and the publisher did not serve it. |
@@ -187,13 +188,51 @@ priority, rate limit, document cap and adapter options.
 
 **No source is enabled by default, on purpose.** The file ships eight real,
 curated Egyptian and regional candidates, all disabled, because a source may only
-be marked active once it demonstrably works — and this repository was built in an
-environment whose egress proxy answers 403 to CONNECT for every one of those
-domains, so none has been verified either way.
+be marked active once it demonstrably works.
 
-Run `python -m app.cli check-sources` from a host with outbound HTTPS. Anything it
-reports `READY_TO_ENABLE` has been fetched and parsed; confirm the publisher's
-terms permit automated access, then set `enabled: true`.
+### Enabling a source
+
+Enablement is a deployment setting, not an edit to the registry: `SOURCES_ENABLED`
+names the source keys that run, comma-separated. `config/` is mounted read-only in
+the container, so the file could not be the switch anyway — and one reviewable list
+of live sources is safer than a flag per entry, which can be left switched on after
+a source breaks.
+
+Probe first, so a source can only be enabled by demonstrating that it works:
+
+```bash
+# What is reachable from here, and why each failure is a failure
+docker compose exec -T api python -m app.cli check-sources
+
+# The allowlist of the ones that passed, and only those
+docker compose exec -T api python -m app.cli enable-sources
+
+# Write it to the host .env (compose reads that one, not one inside the container)
+docker compose exec -T api python -m app.cli enable-sources --quiet >> .env
+docker compose up -d api
+```
+
+Without Docker, the CLI can edit the file in place — it rewrites that one key and
+leaves every other line, comments and secrets included, byte-identical:
+
+```bash
+python -m app.cli enable-sources --write-env .env
+```
+
+`enable-sources` includes only `ACTIVE` and `READY_TO_ENABLE` verdicts. A source
+that is blocked by egress, 404, serving HTML where a feed used to be, or
+certificate-failing is never included — including one that is currently enabled and
+has since stopped working, which is reported so it can be dropped. Setting
+`SOURCES_ENABLED` replaces the file's `enabled` flags entirely: exactly those keys
+run and every other source is off.
+
+One check no probe can do: whether each publisher's terms of use and robots.txt
+permit automated access for this purpose. Confirm that before leaving a source
+enabled.
+
+An unknown key is rejected with the list of keys that do exist, so a typo cannot
+quietly mean "ingest nothing". `python -m app.cli status` reports which sources are
+live (`live_sources`) and any such error (`sources_error`).
 
 ## Current real data
 

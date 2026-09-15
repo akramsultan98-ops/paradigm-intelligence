@@ -245,3 +245,120 @@ def test_shipped_registry_is_valid() -> None:
     # No live feed is enabled by default: nothing is claimed about sources whose
     # terms have not been checked.
     assert all(not config.enabled for config in configs)
+
+
+# --------------------------------------------------------------------------
+# SOURCES_ENABLED: the enablement path
+# --------------------------------------------------------------------------
+# config/ is mounted read-only in the container, so the registry file cannot be the
+# switch. The allowlist is, and it has to be authoritative in both directions.
+
+
+@pytest.fixture
+def enabled_env(monkeypatch: pytest.MonkeyPatch):
+    """Set SOURCES_ENABLED for one test, with the settings cache honoured."""
+    from app.config import get_settings
+
+    def apply(value: str | None) -> None:
+        if value is None:
+            monkeypatch.delenv("SOURCES_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("SOURCES_ENABLED", value)
+        get_settings.cache_clear()
+
+    yield apply
+    monkeypatch.delenv("SOURCES_ENABLED", raising=False)
+    get_settings.cache_clear()
+
+
+def _two_sources(tmp_path: Path) -> Path:
+    return _write_registry(tmp_path, [
+        {"key": "wanted", "adapter": "jsonl", "source_type": "OTHER", "enabled": False,
+         "options": {"path": "x.jsonl"}},
+        {"key": "unwanted", "adapter": "jsonl", "source_type": "OTHER", "enabled": True,
+         "options": {"path": "y.jsonl"}},
+    ])
+
+
+def test_the_allowlist_enables_only_what_it_names(tmp_path: Path, enabled_env) -> None:
+    path = _two_sources(tmp_path)
+    enabled_env("wanted")
+
+    configs = {c.key: c.enabled for c in load_source_configs(path)}
+    assert configs == {"wanted": True, "unwanted": False}
+    assert [a.key for a in load_sources(path)] == ["wanted"]
+
+
+def test_the_allowlist_switches_off_a_source_the_file_enabled(
+    tmp_path: Path, enabled_env
+) -> None:
+    """The important direction: a source left enabled in the file must not creep in.
+
+    This is what makes the live set one reviewable value — a stale `enabled: true`
+    cannot outlive the allowlist that stopped naming it.
+    """
+    path = _two_sources(tmp_path)
+    enabled_env("wanted")
+    assert "unwanted" not in [a.key for a in load_sources(path)]
+
+
+def test_an_empty_allowlist_leaves_the_file_in_charge(tmp_path: Path, enabled_env) -> None:
+    """A fresh deployment sets nothing, and the shipped registry enables nothing."""
+    path = _two_sources(tmp_path)
+    enabled_env(None)
+    assert [a.key for a in load_sources(path)] == ["unwanted"]
+
+
+def test_whitespace_and_order_do_not_matter(tmp_path: Path, enabled_env) -> None:
+    path = _two_sources(tmp_path)
+    enabled_env(" unwanted , wanted ")
+    assert sorted(a.key for a in load_sources(path)) == ["unwanted", "wanted"]
+
+
+def test_an_unknown_key_fails_loudly(tmp_path: Path, enabled_env) -> None:
+    """A typo must not silently mean "ingest nothing".
+
+    Reported as a successful run with no documents, that is the most expensive way
+    for this to go wrong, so it is an error instead.
+    """
+    path = _two_sources(tmp_path)
+    enabled_env("wanted,typoed-key")
+    with pytest.raises(ValueError, match="typoed-key"):
+        load_source_configs(path)
+
+
+def test_the_error_lists_the_keys_that_do_exist(tmp_path: Path, enabled_env) -> None:
+    path = _two_sources(tmp_path)
+    enabled_env("nope")
+    with pytest.raises(ValueError, match="Known keys: unwanted, wanted"):
+        load_source_configs(path)
+
+
+def test_contact_sources_honour_the_allowlist(tmp_path: Path, enabled_env) -> None:
+    from app.sources import load_contact_sources
+
+    path = _write_registry(tmp_path, [
+        {"key": "page", "adapter": "contact_page", "source_type": "COMPANY",
+         "enabled": False,
+         "options": {"url": "https://a.test/leadership", "company": "A"}},
+    ])
+    enabled_env(None)
+    assert load_contact_sources(path) == []
+    enabled_env("page")
+    assert [a.key for a in load_contact_sources(path)] == ["page"]
+
+
+def test_apply_enabled_allowlist_is_a_pure_override() -> None:
+    """Called directly, with no settings involved."""
+    from app.sources import apply_enabled_allowlist
+
+    configs = [
+        SourceConfig(key="a", adapter="jsonl", source_type=SourceType.OTHER, enabled=True),
+        SourceConfig(key="b", adapter="jsonl", source_type=SourceType.OTHER, enabled=False),
+    ]
+    result = apply_enabled_allowlist(configs, ["b"])
+    assert [(c.key, c.enabled) for c in result] == [("a", False), ("b", True)]
+    # Empty leaves every flag exactly as it was.
+    assert [(c.key, c.enabled) for c in apply_enabled_allowlist(configs, [])] == [
+        ("a", False), ("b", True)
+    ]

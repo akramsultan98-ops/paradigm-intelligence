@@ -8,9 +8,10 @@ constants.
 from __future__ import annotations
 
 import functools
+from typing import Annotated
 
 from pydantic import Field, PostgresDsn, computed_field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_SECTORS = (
     "Technology,Telecommunications,Oil & Gas,Energy,Banking,Fintech,FMCG,"
@@ -23,6 +24,17 @@ def _split_csv(value: str | list[str]) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+#: A list setting written as a comma-separated environment variable.
+#:
+#: ``NoDecode`` is required, not cosmetic: pydantic-settings JSON-decodes any
+#: complex-typed field from the environment *before* validators run, so
+#: ``SECTORS=Technology,Banking`` — and even a single ``CORS_ORIGINS=http://host``
+#: — raises ``SettingsError`` at import and takes the process down with it. The
+#: annotation turns the decode off and lets ``_parse_csv_fields`` below do the
+#: splitting, which is what the documented format has always implied.
+CsvList = Annotated[list[str], NoDecode]
 
 
 class Settings(BaseSettings):
@@ -58,7 +70,7 @@ class Settings(BaseSettings):
 
     # --- market scope ----------------------------------------------------
     target_country: str = "EG"
-    sectors: list[str] = Field(default_factory=lambda: _split_csv(DEFAULT_SECTORS))
+    sectors: CsvList = Field(default_factory=lambda: _split_csv(DEFAULT_SECTORS))
 
     # --- Top 50 ----------------------------------------------------------
     top_n: int = 50
@@ -94,6 +106,21 @@ class Settings(BaseSettings):
 
     # --- ingestion -------------------------------------------------------
     sources_config: str = "config/sources.json"
+    #: Authoritative allowlist of source keys to run, by key, comma-separated.
+    #:
+    #: Empty (the default) means the registry file decides, and the registry ships
+    #: everything disabled — so a fresh deployment still ingests nothing until
+    #: somebody says otherwise. When this is set it *replaces* the file's
+    #: ``enabled`` flags entirely: exactly these keys run and every other source is
+    #: off, whatever the file says.
+    #:
+    #: It exists because ``config/`` is mounted read-only in the container, so the
+    #: registry cannot be edited from inside a running deployment — and because an
+    #: allowlist naming the verified sources is safer than a flag per entry: there
+    #: is no way to leave a broken source switched on by forgetting about it.
+    #: ``python -m app.cli enable-sources`` probes the registry and prints the exact
+    #: line to set.
+    sources_enabled: CsvList = Field(default_factory=list)
     ingest_lookback_days: int = 30
     ingest_max_docs_per_source: int = 50
     ingest_user_agent: str = (
@@ -142,7 +169,7 @@ class Settings(BaseSettings):
     brief_top_changed_limit: int = 10
 
     # --- API -------------------------------------------------------------
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    cors_origins: CsvList = Field(default_factory=lambda: ["http://localhost:3000"])
     api_prefix: str = "/api/v1"
     #: Shared secret for /api/v1. Empty means open access, which is refused
     #: outside development (see app/api/security.py).
@@ -155,7 +182,7 @@ class Settings(BaseSettings):
     #: Delay before the first cycle, so start-up is not competing with it.
     scheduler_initial_delay_seconds: float = 60.0
 
-    @field_validator("sectors", "cors_origins", mode="before")
+    @field_validator("sectors", "cors_origins", "sources_enabled", mode="before")
     @classmethod
     def _parse_csv_fields(cls, value: object) -> object:
         if isinstance(value, str):

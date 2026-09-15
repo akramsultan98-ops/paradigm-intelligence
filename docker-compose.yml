@@ -35,6 +35,10 @@ services:
       TOP_N: ${TOP_N:-50}
       MIN_QUALIFYING_SCORE: ${MIN_QUALIFYING_SCORE:-70}
       SOURCES_CONFIG: /app/config/sources.json
+      # Which sources actually run, by key. Empty means none, because the registry
+      # ships every entry disabled. config/ is mounted read-only below, so this is
+      # the enablement path: `enable-sources` probes and prints the line to set.
+      SOURCES_ENABLED: ${SOURCES_ENABLED:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       API_KEY: ${API_KEY:-}
       RELEVANCE_ENABLED: ${RELEVANCE_ENABLED:-true}
