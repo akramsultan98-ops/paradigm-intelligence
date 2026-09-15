@@ -29,6 +29,7 @@ DEPARTMENT_RELEVANCE: dict[Department, float] = {
     Department.PR: 85.0,
     Department.PROCUREMENT: 80.0,
     Department.BUSINESS_DEVELOPMENT: 70.0,
+    Department.EXECUTIVE_OFFICE: 65.0,
     Department.HR: 60.0,
     Department.OTHER: 25.0,
     Department.UNKNOWN: 20.0,

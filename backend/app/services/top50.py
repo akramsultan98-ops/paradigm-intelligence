@@ -15,6 +15,7 @@ from app.domain.enums import (
     Classification,
     IngestMode,
     OpportunityStatus,
+    OpportunityTiming,
     OpportunityType,
 )
 from app.models import Company, Contact, Opportunity, Signal, Source
@@ -65,6 +66,11 @@ class OpportunityFilters:
     #: Fixture data stays out of the operational view unless explicitly asked for
     #: (spec §37).
     include_test: bool = False
+    #: Commercial timing: IMMEDIATE, FUTURE_ACCOUNT or HISTORICAL.
+    timing: OpportunityTiming | None = None
+    #: Past events are account research, never a live opportunity, so they are
+    #: excluded from the ranking unless explicitly requested.
+    include_historical: bool = False
 
 
 def _base_query() -> Select[tuple[Opportunity]]:
@@ -94,6 +100,11 @@ def apply_filters(
         query = query.where(Opportunity.type == filters.opportunity_type)
     if filters.classification is not None:
         query = query.where(Opportunity.classification == filters.classification)
+    if filters.timing is not None:
+        query = query.where(Opportunity.timing_class == filters.timing)
+    elif not filters.include_historical:
+        # Never rank a past event as if it were upcoming.
+        query = query.where(Opportunity.timing_class != OpportunityTiming.HISTORICAL)
     if filters.date_from is not None:
         query = query.where(Opportunity.created_at >= filters.date_from)
     if filters.date_to is not None:

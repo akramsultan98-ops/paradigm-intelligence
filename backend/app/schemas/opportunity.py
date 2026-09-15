@@ -12,12 +12,15 @@ from app.domain.enums import (
     AssertionLevel,
     Classification,
     CommercialValueBand,
+    ContactKind,
     ContactTiming,
     Department,
     EmailStatus,
     OpportunityStatus,
+    OpportunityTiming,
     OpportunityType,
     OpportunityWindow,
+    OutreachStatus,
     SignalType,
     SourceType,
 )
@@ -55,18 +58,38 @@ class CompanyRef(ORMModel):
 
 
 class ContactRef(ORMModel):
-    """A contact, always with its email provenance visible."""
+    """A contact, always with its provenance and freshness visible.
+
+    ``contact_kind`` is the important field: it says whether this is a person, an
+    official department route, or neither. A named individual and an info@ inbox
+    are not the same thing and must never read as if they were.
+    """
 
     id: uuid.UUID
     name: str
     job_title: str | None = None
     department: Department
+    #: NAMED_INDIVIDUAL / DEPARTMENT_ROUTE / UNKNOWN.
+    contact_kind: ContactKind
     email: str | None = None
     linkedin_url: str | None = None
+    #: Published business number only. Never derived.
+    phone: str | None = None
     #: Never ``VERIFIED`` unless an actual verification step set it.
     email_status: EmailStatus
     contact_score: int
     confidence: Decimal
+    #: When this contact was last confirmed against its source. Contact data rots.
+    last_verified_at: datetime | None = None
+
+    # --- outreach state ------------------------------------------------
+    outreach_status: OutreachStatus = OutreachStatus.NOT_CONTACTED
+    last_contacted_at: datetime | None = None
+    next_follow_up_on: date | None = None
+
+    #: Where this contact was read from. Every contact has one or it should not
+    #: be here.
+    source: SourceRef | None = None
 
     @field_serializer("confidence")
     def _confidence(self, value: Decimal) -> float:
@@ -144,6 +167,15 @@ class OpportunityOut(ORMModel):
     opportunity_window: OpportunityWindow
     window_ends_on: date | None = None
     recommended_contact_timing: ContactTiming
+
+    #: The event's own date, only when a source states one (spec: never inferred).
+    event_date: date | None = None
+    #: IMMEDIATE (bid for it) / FUTURE_ACCOUNT (build the relationship) /
+    #: HISTORICAL (already happened; research only). A past event is never
+    #: presented as if it were still upcoming.
+    timing_class: OpportunityTiming
+    #: Plain-language reason for the timing class, in the Account Manager's terms.
+    timing_rationale: str | None = None
 
     previous_score: int | None = None
     previous_classification: Classification | None = None

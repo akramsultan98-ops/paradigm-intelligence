@@ -13,18 +13,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.domain.enums import Department, EmailStatus
+from app.domain.enums import ContactKind, Department, EmailStatus
 from app.models import Company, Contact, Source
 from app.scoring.contact_quality import ContactFactors, score_contact
 from app.services.normalize import (
     normalize_email,
     normalize_linkedin_url,
     normalize_person_name,
+    normalize_phone,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +41,11 @@ class ContactInput:
     department: Department = Department.UNKNOWN
     email: str | None = None
     linkedin_url: str | None = None
+    #: Public business number only, and only if a source publishes one.
+    phone: str | None = None
     email_status: EmailStatus = EmailStatus.UNKNOWN
+    #: A person, an official department route, or neither.
+    contact_kind: ContactKind = ContactKind.UNKNOWN
     confidence: float = 0.5
 
 
@@ -102,6 +108,7 @@ def upsert_contact(
 
     email = normalize_email(payload.email)
     linkedin = normalize_linkedin_url(payload.linkedin_url)
+    phone = normalize_phone(payload.phone)
     email_status = _safe_email_status(payload.email_status, email)
     source_confidence = float(source.confidence) if source is not None else payload.confidence
 
@@ -147,8 +154,17 @@ def upsert_contact(
         if existing.normalized_linkedin_url is None and linkedin:
             existing.linkedin_url = payload.linkedin_url
             existing.normalized_linkedin_url = linkedin
+        if existing.normalized_phone is None and phone:
+            existing.phone = payload.phone
+            existing.normalized_phone = phone
+        if existing.contact_kind is ContactKind.UNKNOWN and (
+            payload.contact_kind is not ContactKind.UNKNOWN
+        ):
+            existing.contact_kind = payload.contact_kind
         if source is not None and existing.source_id is None:
             existing.source_id = source.id
+        # Seen again in its source, so the freshness clock resets.
+        existing.last_verified_at = datetime.now(UTC)
         existing.contact_score = compute_contact_score(
             job_title=existing.job_title,
             department=existing.department,
@@ -170,7 +186,11 @@ def upsert_contact(
         normalized_email=email,
         linkedin_url=payload.linkedin_url.strip() if (payload.linkedin_url and linkedin) else None,
         normalized_linkedin_url=linkedin,
+        phone=payload.phone.strip() if (payload.phone and phone) else None,
+        normalized_phone=phone,
         email_status=email_status,
+        contact_kind=payload.contact_kind,
+        last_verified_at=datetime.now(UTC),
         contact_score=score,
         confidence=Decimal(str(round(max(0.0, min(1.0, payload.confidence)), 2))),
     )
@@ -184,11 +204,16 @@ def upsert_contact(
 
 
 def contacts_for_company(session: Session, company_id: object) -> list[Contact]:
-    """All contacts for a company, best first."""
+    """All contacts for a company, best first.
+
+    The source is eager-loaded: every contact is displayed with the page it was
+    read from, so fetching it lazily would be one query per contact.
+    """
     return list(
         session.scalars(
             select(Contact)
+            .options(joinedload(Contact.source))
             .where(Contact.company_id == company_id)
             .order_by(Contact.contact_score.desc())
-        ).all()
+        ).unique().all()
     )

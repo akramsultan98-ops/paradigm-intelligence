@@ -12,6 +12,7 @@ from app.services.normalize import (
     normalize_email,
     normalize_linkedin_url,
     normalize_person_name,
+    normalize_phone,
     normalize_url,
 )
 
@@ -122,3 +123,32 @@ def test_content_hash_ignores_formatting_but_not_content() -> None:
 def test_content_hash_distinguishes_field_boundaries() -> None:
     """Concatenation must not let two fields blur into one."""
     assert content_hash("ab", "c") != content_hash("a", "bc")
+
+
+# --- phone numbers -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("+20 2 2480 1200", "+20224801200"),
+        ("(02) 2480-1200", "0224801200"),
+        ("002022480 1200", "+20224801200"),
+        ("  +20-100-000-0000  ", "+201000000000"),
+    ],
+)
+def test_phone_normalization_keeps_only_what_identifies_the_line(
+    raw: str, expected: str
+) -> None:
+    assert normalize_phone(raw) == expected
+
+
+@pytest.mark.parametrize("bad", [None, "", "   ", "ext. 204", "1234", "n/a", "+" + "9" * 20])
+def test_implausible_phone_numbers_are_dropped_rather_than_stored(bad: str | None) -> None:
+    """Junk in a phone column looks like a contact route and is not one."""
+    assert normalize_phone(bad) is None
+
+
+def test_phone_normalization_never_invents_a_country_code() -> None:
+    """Nothing is derived. A local number stays local."""
+    assert normalize_phone("2480 1200 9") == "248012009"

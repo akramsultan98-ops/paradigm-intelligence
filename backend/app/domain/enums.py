@@ -166,6 +166,9 @@ class Department(StrEnum):
     PROCUREMENT = "PROCUREMENT"
     BUSINESS_DEVELOPMENT = "BUSINESS_DEVELOPMENT"
     HR = "HR"
+    #: Chairman's or CEO's office, and corporate administration. A real route for
+    #: VIP hospitality and executive gatherings, where marketing is not the buyer.
+    EXECUTIVE_OFFICE = "EXECUTIVE_OFFICE"
     OTHER = "OTHER"
     UNKNOWN = "UNKNOWN"
 
@@ -226,6 +229,74 @@ class AssertionLevel(StrEnum):
     FACT = "FACT"
     INFERENCE = "INFERENCE"
     PREDICTION = "PREDICTION"
+
+
+class OpportunityTiming(StrEnum):
+    """Commercial timing of an opportunity (Priority 4).
+
+    Lead time, not score, decides how an Account Manager should play it. The
+    counter-intuitive part is deliberate: an event two weeks away is usually
+    *already contracted*, so it is worth less as a bid and a great deal as an
+    account relationship for the next one.
+    """
+
+    #: Far enough out that procurement is plausibly still open. Bid for it.
+    IMMEDIATE = "IMMEDIATE"
+    #: Upcoming but so close it is almost certainly contracted, or undated. The
+    #: company is the prize, not this event. Build the relationship.
+    FUTURE_ACCOUNT = "FUTURE_ACCOUNT"
+    #: The event has already happened. Useful for account research; must never be
+    #: presented as a live sales opportunity.
+    HISTORICAL = "HISTORICAL"
+
+
+#: Timings that represent live commercial opportunities and belong in the Top 50.
+#: HISTORICAL is excluded: a past event must not be ranked as if it were upcoming.
+LIVE_TIMINGS: frozenset[OpportunityTiming] = frozenset(
+    {OpportunityTiming.IMMEDIATE, OpportunityTiming.FUTURE_ACCOUNT}
+)
+
+
+class ContactKind(StrEnum):
+    """What kind of contact this is (Priority 3).
+
+    Held as a field rather than inferred from the name, so an official department
+    mailbox is never mistaken for a person we actually know.
+    """
+
+    #: A named person, with a role, from a legitimate public source.
+    NAMED_INDIVIDUAL = "NAMED_INDIVIDUAL"
+    #: An official route into a department — a press office, an exhibitor desk.
+    DEPARTMENT_ROUTE = "DEPARTMENT_ROUTE"
+    #: We know the department matters but have no route into it.
+    UNKNOWN = "UNKNOWN"
+
+
+class OutreachStatus(StrEnum):
+    """Where a relationship stands (Priority 5)."""
+
+    NOT_CONTACTED = "NOT_CONTACTED"
+    ATTEMPTED = "ATTEMPTED"
+    CONTACTED = "CONTACTED"
+    IN_DISCUSSION = "IN_DISCUSSION"
+    MEETING_BOOKED = "MEETING_BOOKED"
+    PROPOSAL_SENT = "PROPOSAL_SENT"
+    WON = "WON"
+    LOST = "LOST"
+    NURTURE = "NURTURE"
+
+
+class OutreachAction(StrEnum):
+    """What was actually done (Priority 5)."""
+
+    EMAIL_SENT = "EMAIL_SENT"
+    CALL_MADE = "CALL_MADE"
+    CALL_ATTEMPTED = "CALL_ATTEMPTED"
+    LINKEDIN_MESSAGE = "LINKEDIN_MESSAGE"
+    MEETING_HELD = "MEETING_HELD"
+    PROPOSAL_SENT = "PROPOSAL_SENT"
+    INTRODUCTION_REQUESTED = "INTRODUCTION_REQUESTED"
+    NOTE = "NOTE"
 
 
 class Classification(StrEnum):

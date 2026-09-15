@@ -9,7 +9,7 @@ exactly the sort of thing that writes a hallucinated company into a table.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -98,6 +98,11 @@ class Extraction(BaseModel):
     event_probability: Score100 | None = None
     commercial_value: Score100 | None = None
     opportunity_window: OpportunityWindow = OpportunityWindow.UNKNOWN
+    #: The actual event date, only when the source states one. This is what turns
+    #: timing from a guess into a fact, so never infer it.
+    event_date: date | None = None
+    #: True only when the source reports the event has already taken place.
+    event_already_occurred: bool | None = None
 
     # --- contact routing (a role, never a fabricated person) -------------
     likely_department: Department = Department.UNKNOWN

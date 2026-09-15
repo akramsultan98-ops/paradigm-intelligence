@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -18,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.enums import Department, EmailStatus
+from app.domain.enums import ContactKind, Department, EmailStatus, OutreachStatus
 from app.models.base import Base, created_at_col, enum_col, updated_at_col, uuid_pk
 
 if TYPE_CHECKING:
@@ -58,6 +60,34 @@ class Contact(Base):
     normalized_email: Mapped[str | None] = mapped_column(String(320), unique=True)
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
     normalized_linkedin_url: Mapped[str | None] = mapped_column(String(500), unique=True)
+    #: Public business number only, and only when a source publishes one. Never
+    #: derived, never a personal mobile inferred from anything.
+    phone: Mapped[str | None] = mapped_column(String(50))
+    normalized_phone: Mapped[str | None] = mapped_column(String(32), index=True)
+
+    #: Whether this is a person, an official department route, or neither. A field
+    #: rather than a guess from the name, so the two can never be confused.
+    contact_kind: Mapped[ContactKind] = mapped_column(
+        enum_col(ContactKind, "contact_kind"),
+        nullable=False,
+        default=ContactKind.UNKNOWN,
+        index=True,
+    )
+    #: When this contact was last confirmed against its source. Contact data rots;
+    #: an Account Manager needs to know how old it is.
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- outreach state (Priority 5) -----------------------------------
+    # Denormalised from outreach_log so a profile renders in one query. The log
+    # remains the record of what happened.
+    outreach_status: Mapped[OutreachStatus] = mapped_column(
+        enum_col(OutreachStatus, "contact_outreach_status"),
+        nullable=False,
+        default=OutreachStatus.NOT_CONTACTED,
+        index=True,
+    )
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_follow_up_on: Mapped[date | None] = mapped_column(Date, index=True)
 
     email_status: Mapped[EmailStatus] = mapped_column(
         enum_col(EmailStatus, "contact_email_status"),

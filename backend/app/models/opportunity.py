@@ -28,6 +28,7 @@ from app.domain.enums import (
     CommercialValueBand,
     ContactTiming,
     OpportunityStatus,
+    OpportunityTiming,
     OpportunityType,
     OpportunityWindow,
     RecommendedAction,
@@ -114,6 +115,18 @@ class Opportunity(Base):
         enum_col(OpportunityWindow, "opportunity_window"), nullable=False
     )
     window_ends_on: Mapped[date | None] = mapped_column(Date)
+    #: The actual date of the event, when a source states one. This is what makes
+    #: timing classification real rather than inferred from a fuzzy window.
+    event_date: Mapped[date | None] = mapped_column(Date, index=True)
+    #: IMMEDIATE / FUTURE_ACCOUNT / HISTORICAL — how to play it commercially.
+    timing_class: Mapped[OpportunityTiming] = mapped_column(
+        enum_col(OpportunityTiming, "opportunity_timing_class"),
+        nullable=False,
+        default=OpportunityTiming.FUTURE_ACCOUNT,
+        index=True,
+    )
+    #: One line explaining the timing verdict, shown to the Account Manager.
+    timing_rationale: Mapped[str | None] = mapped_column(Text)
     recommended_contact_timing: Mapped[ContactTiming] = mapped_column(
         enum_col(ContactTiming, "opportunity_contact_timing"), nullable=False
     )

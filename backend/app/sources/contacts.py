@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from bs4 import BeautifulSoup
 
 from app.config import get_settings
-from app.domain.enums import Department, EmailStatus, IngestMode, SourceType
+from app.domain.enums import ContactKind, Department, EmailStatus, IngestMode, SourceType
 from app.sources.base import SourceConfig
 from app.sources.http import FetchClient
 
@@ -121,9 +121,14 @@ class DiscoveredContact:
     department: Department = Department.UNKNOWN
     email: str | None = None
     linkedin_url: str | None = None
+    phone: str | None = None
     #: Published on a public page, so PUBLIC. Never VERIFIED: that would require
     #: an actual verification step, which V1 does not have.
     email_status: EmailStatus = EmailStatus.PUBLIC
+    #: A person or an official department route. Set explicitly by whatever found
+    #: the contact, so the distinction survives into the database instead of being
+    #: guessed back out of the name.
+    contact_kind: ContactKind = ContactKind.UNKNOWN
     confidence: float = 0.6
     source_title: str | None = None
     source_type: SourceType = SourceType.COMPANY
@@ -308,6 +313,9 @@ def extract_contacts_from_html(
                 adapter_key=adapter_key,
                 # A named person on a company page is better evidence than a
                 # bare departmental mailbox.
+                contact_kind=(
+                    ContactKind.NAMED_INDIVIDUAL if name else ContactKind.DEPARTMENT_ROUTE
+                ),
                 confidence=min(1.0, confidence + (0.15 if name else 0.0)),
                 source_type=source_type,
             )
@@ -333,6 +341,7 @@ def extract_contacts_from_html(
                 source_url=source_url,
                 source_title=page_title,
                 adapter_key=adapter_key,
+                contact_kind=ContactKind.DEPARTMENT_ROUTE,
                 confidence=confidence,
                 source_type=source_type,
             )
@@ -344,10 +353,11 @@ def extract_contacts_from_html(
 def _department_label(department: Department, company_name: str) -> str:
     """Name for a departmental mailbox.
 
-    Explicitly a department, not a person, so nobody mistakes it for a named
-    individual we do not have.
+    A department, not a person. The record also carries
+    ``contact_kind=DEPARTMENT_ROUTE``, which is what the UI and the routing read;
+    the wording here is only so the name reads sensibly on its own.
     """
-    return f"{company_name} {department.value.replace('_', ' ').title()} (department contact)"
+    return f"{company_name} {department.value.replace('_', ' ').title()} (department route)"
 
 
 class ContactPageAdapter(ContactSourceAdapter):

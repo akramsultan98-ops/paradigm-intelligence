@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.domain.enums import Classification, OpportunityStatus, OpportunityType
+from app.domain.enums import (
+    Classification,
+    OpportunityStatus,
+    OpportunityTiming,
+    OpportunityType,
+)
 from app.services.top50 import OpportunityFilters, SortField
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -37,6 +42,24 @@ def opportunity_filters(
     include_test: Annotated[
         bool, Query(description="Include TEST-provenance data. Off by default (spec §37).")
     ] = False,
+    timing: Annotated[
+        OpportunityTiming | None,
+        Query(
+            description=(
+                "IMMEDIATE (still biddable), FUTURE_ACCOUNT (likely contracted, "
+                "worth the relationship) or HISTORICAL (past event, research only)."
+            )
+        ),
+    ] = None,
+    include_historical: Annotated[
+        bool,
+        Query(
+            description=(
+                "Include past events in the ranking. Off by default: a past event "
+                "is account research, not a live opportunity."
+            )
+        ),
+    ] = False,
 ) -> OpportunityFilters:
     """The filter set offered by the Top 50 view (spec §22)."""
     return OpportunityFilters(
@@ -52,6 +75,8 @@ def opportunity_filters(
         sort=sort,
         descending=order == "desc",
         include_test=include_test,
+        timing=timing,
+        include_historical=include_historical,
     )
 
 

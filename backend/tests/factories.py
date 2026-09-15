@@ -15,12 +15,14 @@ from sqlalchemy.orm import Session
 from app.domain.enums import (
     AssertionLevel,
     CommercialValueBand,
+    ContactKind,
     ContactTiming,
     Department,
     EmailStatus,
     EvidenceLevel,
     IngestMode,
     OpportunityStatus,
+    OpportunityTiming,
     OpportunityType,
     OpportunityWindow,
     RecommendedAction,
@@ -30,7 +32,13 @@ from app.domain.enums import (
 )
 from app.models import Company, Contact, Opportunity, Signal, Source
 from app.scoring.classification import classify
-from app.services.normalize import content_hash, normalize_company_name, normalize_person_name
+from app.scoring.event_timing import classify_timing
+from app.services.normalize import (
+    content_hash,
+    normalize_company_name,
+    normalize_person_name,
+    normalize_phone,
+)
 
 
 def make_company(
@@ -114,15 +122,24 @@ def make_contact(
     email: str | None = "ahmed.hassan@example.com",
     contact_score: int = 88,
     email_status: EmailStatus = EmailStatus.PUBLIC,
+    contact_kind: ContactKind = ContactKind.NAMED_INDIVIDUAL,
+    phone: str | None = None,
+    source: Source | None = None,
+    last_verified_at: datetime | None = None,
 ) -> Contact:
     contact = Contact(
         company_id=company.id,
+        source_id=source.id if source is not None else None,
         name=name,
         normalized_name=normalize_person_name(name),
         job_title=job_title,
         department=department,
         email=email,
         normalized_email=email,
+        phone=phone,
+        normalized_phone=normalize_phone(phone),
+        contact_kind=contact_kind,
+        last_verified_at=last_verified_at or datetime.now(UTC),
         email_status=email_status if email else EmailStatus.UNKNOWN,
         contact_score=contact_score,
         confidence=Decimal("0.8"),
@@ -148,6 +165,9 @@ def make_opportunity(
     score_changed_at: datetime | None = None,
     base_score: int | None = None,
     ingest_mode: IngestMode = IngestMode.AUTOMATED,
+    event_date: date | None = None,
+    timing_class: OpportunityTiming | None = None,
+    event_already_occurred: bool | None = None,
 ) -> Opportunity:
     """Create a fully-formed opportunity at an exact score.
 
@@ -168,6 +188,12 @@ def make_opportunity(
         title=f"Announcement {uuid.uuid4().hex[:8]}",
     )
 
+    verdict = classify_timing(
+        event_date=event_date,
+        event_already_occurred=event_already_occurred,
+        window=window,
+        window_ends_on=date.today() + timedelta(days=20),
+    )
     opportunity = Opportunity(
         company_id=company.id,
         signal_id=signal.id,
@@ -190,6 +216,9 @@ def make_opportunity(
         opportunity_window=window,
         window_ends_on=date.today() + timedelta(days=20),
         recommended_contact_timing=ContactTiming.WITHIN_1_WEEK,
+        event_date=event_date,
+        timing_class=timing_class or verdict.timing,
+        timing_rationale=verdict.rationale,
         status=status,
         previous_score=previous_score,
         previous_classification=classify(previous_score) if previous_score is not None else None,

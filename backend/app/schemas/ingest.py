@@ -7,7 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.ai.base import Extraction
-from app.domain.enums import Department, EmailStatus, SourceType
+from app.domain.enums import ContactKind, Department, EmailStatus, SourceType
 
 
 class DocumentIn(BaseModel):
@@ -54,7 +54,18 @@ class ContactIn(BaseModel):
     department: Department = Department.UNKNOWN
     email: str | None = None
     linkedin_url: str | None = None
+    phone: str | None = Field(
+        default=None,
+        description="Published business number only. Never a derived or personal one.",
+    )
     email_status: EmailStatus = EmailStatus.UNKNOWN
+    contact_kind: ContactKind = Field(
+        default=ContactKind.UNKNOWN,
+        description=(
+            "NAMED_INDIVIDUAL for a person, DEPARTMENT_ROUTE for an official "
+            "department address or line. The two must never be conflated."
+        ),
+    )
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     source_url: HttpUrl = Field(description="Public page this contact was found on.")
     source_title: str | None = None

@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.domain.enums import Department, EmailStatus, IngestMode, SourceType
+from app.domain.enums import ContactKind, Department, EmailStatus, IngestMode, SourceType
 from app.models import Contact, Opportunity
 from app.services.contact_discovery import ContactDiscoveryStats, run_contact_discovery
 from app.sources.base import SourceConfig
@@ -78,12 +78,26 @@ def test_never_a_route_to_event_spend(mailbox: str) -> None:
     assert not any(f"{mailbox}@" in (c.email or "") for c in _parse())
 
 
-def test_departmental_mailboxes_are_kept_but_labelled_as_departments() -> None:
-    """A real published mailbox is worth having; inventing a person for it is not."""
+def test_departmental_mailboxes_are_kept_but_marked_as_routes() -> None:
+    """A real published mailbox is worth having; inventing a person for it is not.
+
+    The guarantee is the ``contact_kind`` field, not the wording of the name: a
+    structured flag cannot be misread the way a naming convention can.
+    """
     press = next(c for c in _parse() if c.email == "press@example.com")
     assert press.department is Department.PR
     assert press.job_title is None
-    assert "department contact" in press.name
+    assert press.contact_kind is ContactKind.DEPARTMENT_ROUTE
+    assert "route" in press.name.casefold()
+
+
+def test_named_people_are_marked_as_individuals() -> None:
+    """The two kinds must never be conflated (Priority 3)."""
+    named = [c for c in _parse() if c.contact_kind is ContactKind.NAMED_INDIVIDUAL]
+    assert named, "the fixture page lists real people"
+    assert all(c.job_title or c.name for c in named)
+    # Nothing is left unclassified: every contact is a person or a route.
+    assert all(c.contact_kind is not ContactKind.UNKNOWN for c in _parse())
 
 
 def test_every_contact_carries_its_source() -> None:

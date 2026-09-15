@@ -6,12 +6,17 @@ by strength rather than recency, and never padding the list.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.domain.enums import Classification, OpportunityStatus, OpportunityType
+from app.domain.enums import (
+    Classification,
+    OpportunityStatus,
+    OpportunityTiming,
+    OpportunityType,
+)
 from app.services.top50 import OpportunityFilters, get_top_opportunities, list_opportunities
 from tests.conftest import requires_db
 from tests.factories import make_opportunity
@@ -188,3 +193,69 @@ def test_list_opportunities_paginates(session: Session) -> None:
 
 def test_empty_database_returns_an_empty_list(session: Session, settings) -> None:
     assert get_top_opportunities(session, settings=settings) == []
+
+
+# --- timing (Priority 4) -------------------------------------------------
+
+
+def test_a_past_event_is_not_ranked_as_if_it_were_upcoming(
+    session: Session, settings
+) -> None:
+    """The rule the timing work exists for. A high score does not resurrect it."""
+    make_opportunity(
+        session,
+        score=95,
+        company_name="Already Happened Industries",
+        event_date=date.today() - timedelta(days=30),
+    )
+    make_opportunity(
+        session,
+        score=75,
+        company_name="Still Biddable Holdings",
+        event_date=date.today() + timedelta(days=45),
+    )
+
+    ranked = get_top_opportunities(session, settings=settings)
+    assert [o.company.name for o in ranked] == ["Still Biddable Holdings"]
+
+
+def test_past_events_are_available_when_explicitly_asked_for(
+    session: Session, settings
+) -> None:
+    """Account research is a real use; it just is not the ranking."""
+    make_opportunity(
+        session,
+        score=95,
+        company_name="Research Only",
+        event_date=date.today() - timedelta(days=30),
+    )
+    ranked = get_top_opportunities(
+        session, OpportunityFilters(include_historical=True), settings=settings
+    )
+    assert [o.company.name for o in ranked] == ["Research Only"]
+
+
+def test_timing_can_be_filtered_directly(session: Session, settings) -> None:
+    make_opportunity(
+        session, score=90, company_name="Bid Now", event_date=date.today() + timedelta(days=60)
+    )
+    make_opportunity(
+        session,
+        score=88,
+        company_name="Build The Account",
+        event_date=date.today() + timedelta(days=10),
+    )
+
+    immediate = get_top_opportunities(
+        session,
+        OpportunityFilters(timing=OpportunityTiming.IMMEDIATE),
+        settings=settings,
+    )
+    assert [o.company.name for o in immediate] == ["Bid Now"]
+
+    future = get_top_opportunities(
+        session,
+        OpportunityFilters(timing=OpportunityTiming.FUTURE_ACCOUNT),
+        settings=settings,
+    )
+    assert [o.company.name for o in future] == ["Build The Account"]

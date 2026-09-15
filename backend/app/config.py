@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     #: actor required. An event's own announcement is evidence on its own.
     relevance_event_sufficiency_hits: int = 2
 
+    # --- commercial timing (Priority 4) ----------------------------------
+    #: Lead time at or below which event production is assumed already contracted,
+    #: so the opportunity is an account relationship rather than a bid. Three weeks
+    #: is the practical floor for briefing, designing and building a stand.
+    timing_contracted_lead_days: int = 21
+
     # --- brief -----------------------------------------------------------
     brief_lookback_hours: int = 24
     #: Spec §25 asks for the top 10 new opportunities.

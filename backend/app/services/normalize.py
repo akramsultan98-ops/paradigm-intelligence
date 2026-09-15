@@ -173,6 +173,27 @@ def normalize_linkedin_url(value: str | None) -> str | None:
     return None
 
 
+def normalize_phone(value: str | None) -> str | None:
+    """Digits-only form of a phone number, with any leading ``+`` preserved.
+
+    Used only for deduplication and display consistency. Returns ``None`` for
+    anything that is not plausibly a phone number, so junk is dropped rather than
+    stored — and nothing is ever derived: a number is stored only when a source
+    publishes one.
+    """
+    if not value:
+        return None
+    raw = value.strip()
+    plus = raw.lstrip().startswith("+") or raw.lstrip().startswith("00")
+    digits = re.sub(r"\D", "", raw)
+    if raw.lstrip().startswith("00"):
+        digits = digits[2:]
+    # Shorter than 7 is an extension, longer than 15 breaks E.164.
+    if not 7 <= len(digits) <= 15:
+        return None
+    return ("+" if plus else "") + digits
+
+
 def normalize_person_name(name: str) -> str:
     """Canonical person key: accents stripped, punctuation dropped, collapsed."""
     text = strip_accents(name).casefold()

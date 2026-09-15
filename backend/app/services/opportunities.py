@@ -32,6 +32,7 @@ from app.scoring import (
     is_qualified,
     score_opportunity,
 )
+from app.scoring.event_timing import classify_timing
 from app.services.companies import note_event_potential
 from app.services.contacts import contacts_for_company
 from app.services.signals import count_corroborating_sources
@@ -184,6 +185,17 @@ def create_or_update_opportunity(
     result = score_opportunity(inputs, settings)
     best_contact = _best_contact(contacts)
 
+    # Commercial timing: biddable, account-relationship, or history. Computed from
+    # the real event date where the source gave one, and from the window otherwise.
+    timing = classify_timing(
+        event_date=extraction.event_date,
+        event_already_occurred=extraction.event_already_occurred,
+        window=extraction.opportunity_window,
+        window_ends_on=result.window_ends_on,
+        as_of=as_of,
+        settings=settings,
+    )
+
     existing = session.scalars(
         select(Opportunity).where(
             Opportunity.signal_id == signal.id, Opportunity.type == extraction.event_type
@@ -198,6 +210,11 @@ def create_or_update_opportunity(
         existing.fact = extraction.fact or existing.fact
         existing.inference = extraction.inference or existing.inference
         existing.prediction = extraction.prediction or existing.prediction
+        # Timing is recomputed on every pass: the same event moves from biddable to
+        # account-relationship to history purely by the calendar advancing.
+        existing.event_date = extraction.event_date or existing.event_date
+        existing.timing_class = timing.timing
+        existing.timing_rationale = timing.rationale
         # Promote a NEW opportunity that now qualifies. Statuses a human has
         # moved on are never touched.
         if existing.status is OpportunityStatus.NEW and is_qualified(result.score, settings):
@@ -220,6 +237,9 @@ def create_or_update_opportunity(
         recommended_action=extraction.recommended_action,
         recommended_services=[service.value for service in extraction.recommended_services],
         opportunity_window=extraction.opportunity_window,
+        event_date=extraction.event_date,
+        timing_class=timing.timing,
+        timing_rationale=timing.rationale,
         status=(
             OpportunityStatus.QUALIFIED
             if is_qualified(result.score, settings)

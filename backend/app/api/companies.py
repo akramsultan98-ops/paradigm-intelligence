@@ -11,11 +11,18 @@ from sqlalchemy.orm import joinedload
 from app.api.deps import SessionDep, SettingsDep
 from app.config import get_settings
 from app.domain.enums import CLOSED_STATUSES, CONFIRMED_EVENT_SIGNALS
-from app.models import Company, Opportunity, Signal
+from app.models import Company, Opportunity, OutreachLog, Signal
 from app.schemas.company import CompanyDetail, CompanyOut, CompanyRelative
 from app.schemas.opportunity import ContactRef, OpportunityOut, SignalRef
+from app.schemas.outreach import OutreachCreate, OutreachLogOut, OutreachStateOut
+from app.services import company_profile
 from app.services.contacts import contacts_for_company
-from app.services.top50 import OpportunityFilters, list_opportunities
+from app.services.outreach import (
+    OutreachInput,
+    company_state,
+    history_for_company,
+    log_outreach,
+)
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -85,11 +92,26 @@ def company_detail(
         if signal.type in CONFIRMED_EVENT_SIGNALS
     ]
 
-    opportunities = list_opportunities(
-        session, OpportunityFilters(), limit=50, offset=0
+    # Every opportunity at this company, past ones included: a past event is
+    # account evidence even though it is never ranked as if it were upcoming.
+    own = list(
+        session.scalars(
+            select(Opportunity)
+            .options(
+                joinedload(Opportunity.company),
+                joinedload(Opportunity.signal).joinedload(Signal.source),
+                joinedload(Opportunity.primary_contact),
+            )
+            .where(Opportunity.company_id == company.id)
+            .order_by(Opportunity.score.desc())
+        ).unique().all()
     )
-    own = [o for o in opportunities if o.company_id == company.id]
     payload.opportunities = [OpportunityOut.model_validate(o) for o in own]
+
+    timings = company_profile.timing_counts(own)
+    payload.immediate_opportunity_count = timings.immediate
+    payload.future_account_opportunity_count = timings.future_account
+    payload.historical_opportunity_count = timings.historical
 
     if company.parent is not None:
         payload.parent = CompanyRelative.model_validate(company.parent)
@@ -122,4 +144,104 @@ def company_detail(
             Opportunity.status.notin_([s.value for s in CLOSED_STATUSES]),
         )
     )
+
+    # --- contact intelligence (Priorities 1, 2 and 5) --------------------
+    contacts = contacts_for_company(session, company.id)
+    payload.relevant_departments = company_profile.relevant_departments(own, contacts)
+    payload.contact_intelligence = company_profile.contact_intelligence(
+        contacts,
+        needed_departments=[
+            suggestion.department for suggestion in payload.relevant_departments
+        ],
+    )
+
+    routing_for = company_profile.routing_opportunity(own)
+    payload.routing_opportunity_id = routing_for.id if routing_for is not None else None
+    payload.recommended_contacts = company_profile.ranked_for(routing_for, contacts)
+
+    state = company_state(session, company.id)
+    payload.outreach = OutreachStateOut(
+        status=state.status,
+        last_contacted_at=state.last_contacted_at,
+        next_follow_up_on=state.next_follow_up_on,
+        interactions=state.interactions,
+        overdue=state.overdue,
+    )
+    payload.outreach_history = [
+        _log_out(entry) for entry in history_for_company(session, company.id)
+    ]
+    payload.recommended_first_action = company_profile.recommend_first_action(
+        company_name=company.name,
+        opportunity=routing_for,
+        ranked=payload.recommended_contacts,
+        outreach_status=state.status,
+    )
     return payload
+
+
+def _log_out(entry: OutreachLog) -> OutreachLogOut:
+    """One log row, with the names it refers to resolved for display."""
+    payload = OutreachLogOut.model_validate(entry)
+    payload.contact_name = entry.contact.name if entry.contact is not None else None
+    payload.opportunity_type = (
+        entry.opportunity.type if entry.opportunity is not None else None
+    )
+    return payload
+
+
+@router.get(
+    "/{company_id}/outreach",
+    response_model=list[OutreachLogOut],
+    summary="Outreach history",
+)
+def outreach_history(
+    company_id: uuid.UUID,
+    session: SessionDep,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[OutreachLogOut]:
+    """Everything logged against this company, newest first."""
+    if session.get(Company, company_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+    return [
+        _log_out(entry) for entry in history_for_company(session, company_id, limit=limit)
+    ]
+
+
+@router.post(
+    "/{company_id}/outreach",
+    response_model=OutreachLogOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Log an outreach action",
+)
+def create_outreach(
+    company_id: uuid.UUID, payload: OutreachCreate, session: SessionDep
+) -> OutreachLogOut:
+    """Record what was actually done, and when to come back.
+
+    Company-scoped: an account can be worked before there is a named person to
+    attach anything to. Passing a contact or opportunity that belongs to a
+    different company is rejected rather than silently stored.
+    """
+    company = session.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+    try:
+        entry = log_outreach(
+            session,
+            company=company,
+            payload=OutreachInput(
+                action=payload.action,
+                contact_id=payload.contact_id,
+                opportunity_id=payload.opportunity_id,
+                status_after=payload.status_after,
+                occurred_at=payload.occurred_at,
+                next_follow_up_on=payload.next_follow_up_on,
+                note=payload.note,
+                logged_by=payload.logged_by,
+            ),
+        )
+    except ValueError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    session.commit()
+    session.refresh(entry)
+    return _log_out(entry)

@@ -45,18 +45,24 @@ these apart, and you must fill all three for any opportunity:
    - `prediction`: what corporate activity may result. Never presented as \
      settled ("potential", "may lead to").
    Keep the same discipline in `why_now` and `sales_angle`.
-4. NO BUDGETS. Do not estimate monetary value. `commercial_value` is a 0-100 \
+4. DATES. Set `event_date` ONLY if the document states a specific date for the \
+event itself. Never infer one from "next month" or "in the autumn" - leave it null. \
+Set `event_already_occurred` true only if the document reports the event as having \
+already happened (an opening that took place, a conference that was held). These two \
+fields decide whether the system treats an opportunity as biddable, an account \
+relationship, or history, so a guessed date does real damage.
+5. NO BUDGETS. Do not estimate monetary value. `commercial_value` is a 0-100 \
 relative scale, not money.
-5. NAME NO PEOPLE. `potential_contact_role` is a ROLE ("Marketing Director"), \
+6. NAME NO PEOPLE. `potential_contact_role` is a ROLE ("Marketing Director"), \
 never a person's name, even if the document names someone. Contact records come \
 from a separate, source-attributed path.
-6. BE CONSERVATIVE ON `event_probability`. It is 0-100 and must be hard to \
+7. BE CONSERVATIVE ON `event_probability`. It is 0-100 and must be hard to \
 score high. Use 80+ only when the document itself announces or strongly implies \
 a gathering. A routine corporate announcement with no event implication belongs \
 in the 10-30 range. A tender notice on its own is low.
-7. `possible_event` is false unless there is a realistic event implication. \
+8. `possible_event` is false unless there is a realistic event implication. \
 Setting it false is normal and correct for most documents.
-8. If the document names no identifiable company, set `company_name` to null.
+9. If the document names no identifiable company, set `company_name` to null.
 
 GEOGRAPHY
 The market is EGYPT. A document about a company with no Egyptian operations or \
